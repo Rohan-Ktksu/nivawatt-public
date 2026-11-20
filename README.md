@@ -6,7 +6,26 @@ The 3D campus adds live demand comparison, one-hour fast-forward, and a separate
 
 [Download v4.0.0 ZIP](https://github.com/oxydevelopers/nivawatt-public/archive/refs/tags/v4.0.0.zip) · [Release notes and screenshots](https://github.com/oxydevelopers/nivawatt-public/releases/tag/v4.0.0)
 
-NivaWatt demonstrates how apartment buildings can schedule water pumps and EV chargers around a demand advisory, then use readings to verify what happened. A manager accepts each plan. Equipment switching in the demo is simulated.
+NivaWatt is an advisory system for apartment water pumps and EV chargers. The operator picks peak hours from a Karnataka demand forecast. The service proposes a schedule that accounts for water reserves and charging deadlines. Each building manager decides whether to accept it, and meter and tank readings show what actually happened.
+
+[Project plan and architecture](docs/PROJECT_PLAN.md) · [Research, results, and sources](docs/RESEARCH.md)
+
+## How it works
+
+```mermaid
+flowchart LR
+    forecast["Karnataka demand forecast"] --> advisory["Operator issues peak advisory"]
+    advisory --> proposal["Service proposes a building schedule"]
+    proposal --> decision{"Manager accepts?"}
+    decision -->|"Yes"| manual["Manual switching"]
+    decision -->|"No"| pending["Keep the current plan, if any"]
+    manual --> readings["Meter and tank readings"]
+    readings --> check["Compare with the accepted plan"]
+    check -->|"Revision warranted"| proposal
+    check -->|"Show result"| views["Manager and campus views"]
+```
+
+In v4's separate synthetic monthly replay, the four-building coincident peak falls from **690.9 to 650.4 kW**. The four modeled HT-4 connections show **₹19,139.99 in estimated monthly savings** under the replay's tariff and service assumptions. The [research report](docs/RESEARCH.md#four-building-replay-in-v4) gives the per-building results, the baseline, and the limits of the estimate.
 
 ## Run locally
 
