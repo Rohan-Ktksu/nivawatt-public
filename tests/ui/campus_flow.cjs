@@ -101,6 +101,12 @@ const sig = (root) => root.evaluate((el) => ['pump', 'charger', 'tank'].map((k) 
     for (const a of APTS) assert.ok((await state(runs[a], a)).pending_proposals.length >= 1, `${a} has no proposal`);
   });
 
+  await check('live fast-forward waits when manager acceptance is pending', async () => {
+    await page.click('[data-act=fast]');
+    await until(page, () => /paused for a manager decision/.test(document.querySelector('#toast')?.textContent || ''));
+    for (const a of APTS) assert.strictEqual((await state(runs[a], a)).clock.interval_index, 0);
+  });
+
   // ---------- four managers, each on their own link ----------
   const mg = {};
   const links = {};
@@ -353,6 +359,53 @@ const sig = (root) => root.evaluate((el) => ['pump', 'charger', 'tank'].map((k) 
     await page.waitForTimeout(2500);
     const [content, view] = await page.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth]);
     assert.ok(content <= view, `page is ${content}px wide in a ${view}px screen`);
+  });
+
+  await check('live demand chart uses run data and keeps the missed reading as a gap', async () => {
+    await page.click('#bldg-APT_4');
+    await page.click('#live-demand > summary');
+    await page.locator('#live-demand-content svg').waitFor();
+    assert.match(await page.locator('#live-demand-content').innerText(), /APT_4.*Whole-building demand/);
+    const trace = await ok('GET', `/runs/${runs.APT_4}/demand-trace`, opTok);
+    assert.strictEqual(trace.points[1][1], null);
+    assert.ok(Number.isFinite(trace.points[0][1]));
+    assert.match(await page.locator('#live-demand-content').innerText(), /Partial data/);
+  });
+
+  await check('monthly replay compares peaks and only reveals savings after the full month', async () => {
+    await page.click('#billing-replay > summary');
+    await page.locator('#billing-chart svg').waitFor();
+    const month = JSON.parse(fs.readFileSync(path.join(ROOT, 'web', 'campus-billing-data.json'), 'utf8'));
+    const total = month.buildings.reduce((n, b) => n + b.saving_rs, 0);
+    assert.ok(month.buildings.every((b) => b.comparable && b.blocks.length === 1440));
+    const totalText = total.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    assert.ok((await page.locator('#billing-chart').innerText()).includes(totalText));
+    await page.selectOption('#billing-view', 'APT_2');
+    assert.match(await page.locator('#billing-chart').innerText(), /Contract demand.*kVA/);
+    await page.locator('#billing-position').fill('48');
+    assert.match(await page.locator('#billing-chart').innerText(), /Available at month end/);
+    await page.click('#billing-end');
+    assert.match(await page.locator('#billing-time').innerText(), /Day 30 of 30/);
+    await page.click('#billing-replay > summary');
+  });
+
+  await check('one-hour fast-forward follows the accepted plans and closes exactly four intervals', async () => {
+    await page.click('[data-act=forget]');
+    await page.click('[data-act=create]');
+    await until(page, () => /^run-/.test(document.querySelector('[data-testid=run-APT_4]')?.textContent || ''));
+    for (const a of APTS) runs[a] = await page.getByTestId('run-' + a).innerText();
+    await page.click('[data-act=issue]');
+    await until(page, () => /Delivered/.test(document.querySelector('[data-testid=delivery-APT_4]')?.textContent || ''));
+    for (const a of APTS) {
+      const p = (await state(runs[a], a)).pending_proposals[0];
+      await ok('POST', `/proposals/${p.proposal_id}/decision`, mgTok[a], {
+        request_id: `fast-${runs[a]}`, run_id: runs[a], expected_revision: p.revision,
+        decision: 'ACCEPT', option_id: p.options[0].option_id,
+      });
+    }
+    await page.click('[data-act=fast]');
+    await until(page, () => document.querySelector('[data-testid=group-interval]')?.textContent === '4');
+    assert.deepStrictEqual(await clocks(), Object.fromEntries(APTS.map((a) => [a, 4])));
   });
 
   await check('no page errors', async () => { assert.deepStrictEqual(errors, []); });

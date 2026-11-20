@@ -110,6 +110,7 @@ const NW_API = (() => {
     operatorState: (runId) => call('GET', `/operator/state?run_id=${q(runId)}`),
     state: (runId, apartmentId) => call('GET', `/state?run_id=${q(runId)}&apartment_id=${q(apartmentId)}`),
     report: (runId) => call('GET', `/runs/${q(runId)}/report`),
+    demandTrace: (runId) => call('GET', `/runs/${q(runId)}/demand-trace`),
     runBilling: (runId) => call('GET', `/runs/${q(runId)}/billing`),
     billingScenario: () => call('GET', '/billing/scenario'),
     issueAdvisory: (runId, knownFromInterval, forecast, windows, targets) => call('POST', '/events', {

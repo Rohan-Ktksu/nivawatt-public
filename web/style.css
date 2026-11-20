@@ -222,3 +222,22 @@ details > summary { cursor: pointer; font-weight: 600; min-height: 2.75rem; disp
 .demo-links code { display: block; font-size: .75rem; overflow-wrap: anywhere; }
 @media (max-width: 30rem) { .bldg .scene3d { zoom: .4; } .controls th, .controls td { padding: .25rem; } }
 .side-cols .big { font-size: 1.125rem; }
+.demand-panel > summary { font-size: 1.15rem; cursor: pointer; }
+.demand-chart { display: block; width: 100%; height: auto; margin: .7rem 0; background: var(--paper, #fff); }
+.demand-chart text { fill: var(--ink); font-size: 17px; }
+.demand-chart path { fill: none; stroke-width: 2.8; stroke-linecap: round; stroke-linejoin: round; }
+.demand-chart .demand-base { stroke: #627889; }
+.demand-chart .demand-actual { stroke: #007a82; }
+.demand-chart circle.demand-base { fill: #627889; }
+.demand-chart circle.demand-actual { fill: #007a82; }
+.demand-gridline { stroke: var(--line, #c7d8dc); stroke-width: 1; }
+.demand-limit { stroke: #a65f13; stroke-width: 1.8; stroke-dasharray: 6 4; }
+.demand-legend { display: flex; flex-wrap: wrap; gap: .45rem 1.25rem; font-size: .9rem; }
+.demand-legend span::before { content: ''; display: inline-block; width: 1.2em; margin-right: .4em; border-top: 3px solid; vertical-align: .24em; }
+.demand-legend .key-base::before { border-color: #627889; }
+.demand-legend .key-actual::before { border-color: #007a82; }
+.demand-legend .key-limit::before { border-color: #a65f13; border-top-style: dashed; }
+.billing-controls { display: flex; flex-wrap: wrap; gap: 1rem; align-items: end; }
+.billing-controls .field { flex: 1 1 10rem; }
+#billing-position { width: 100%; }
+.billing-rows { min-width: 35rem; }

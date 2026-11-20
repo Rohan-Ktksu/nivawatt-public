@@ -799,6 +799,7 @@ def post_requirements(b: dict = Depends(body), sess=Depends(session)):
                     or dep <= s["arrival_interval"] or not isinstance(req, (int, float)) or req < 0:
                 raise ApiError(422, "INVALID_REQUIREMENT", "departure must be future/within horizon; energy >= 0")
             s["departure_interval"], s["requested_model_kwh"] = dep, req
+        r["params"]["_ev_requirements_changed"] = True
         prop = replan(r, "REQUIREMENT_CHANGED")
         save_run(r)
         return {"revision": r["revision"], "proposal": prop, "warnings": r.get("_warnings", [])}
@@ -1643,6 +1644,32 @@ def get_operator_state(run_id: str, sess=Depends(session)):
                                 "execution": s["execution"]}],
                 "events": events, "forecast_id": s["forecast_id"], "active_advisory": s["active_advisory"],
                 "observation_coverage": {"intervals_elapsed": n, "valid_observations": valid}, "warnings": s["warnings"]}
+
+
+@app.get("/api/v1/runs/{run_id}/demand-trace")
+def demand_trace(run_id: str, sess=Depends(session)):
+    require(sess, "operator")
+    with tx():
+        r = load_run(run_id)
+        p = r["params"]
+        elapsed = r["interval_index"]
+        observations = observed(r)
+        # Replaying the final parameters over earlier intervals would give the baseline future information.
+        changed = p.get("_ev_requirements_changed") or db.one(
+            "SELECT 1 FROM proposals WHERE run_id=? AND (body LIKE '%REQUIREMENT_CHANGED%' OR body LIKE '%OUTAGE_ANNOUNCED%') LIMIT 1",
+            run_id,
+        ) or db.one("SELECT 1 FROM events WHERE run_id=? AND kind='outage' AND applied=1 LIMIT 1", run_id)
+    if p["observation_source"] != "simulator" or p["model_dt_minutes"] != 15 or p["horizon_intervals"] > 96:
+        raise ApiError(422, "TRACE_UNAVAILABLE", "Demand comparison requires a one-day browser simulation.")
+    if changed:
+        raise ApiError(422, "TRACE_UNAVAILABLE", "Demand comparison is unavailable after requirements or supply changed.")
+    from billing import live_demand
+
+    local = parse_ts(r["clock_start_utc"], "clock_start_utc") + timedelta(hours=5, minutes=30)
+    offset = (local.hour * 60 + local.minute) // 15
+    seed = int(hashlib.sha256(p["apartment_id"].encode()).hexdigest()[:8], 16)
+    return {"run_id": run_id, "interval": elapsed, "start_utc": r["clock_start_utc"], "interval_minutes": 15,
+            "source_kind": "synthetic", "points": live_demand.compare_completed(p, observations, elapsed, offset, seed)}
 
 
 @app.get("/api/v1/runs/{run_id}/report")

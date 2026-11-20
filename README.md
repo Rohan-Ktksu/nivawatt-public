@@ -1,8 +1,8 @@
 # NivaWatt
 
-**v3.0.0 · 3D campus simulation**
+**v4.0.0 · 3D demand charts and monthly savings**
 
-Meter-driven 3D views for four campus buildings, apartment-specific manager pages, and coordinated simulation time controls.
+The 3D campus adds live demand comparison, one-hour fast-forward, and a separate synthetic 30-day HT-4 billing replay.
 
 NivaWatt demonstrates how apartment buildings can schedule water pumps and EV chargers around a demand advisory, then use readings to verify what happened. A manager accepts each plan. Equipment switching in the demo is simulated.
 
@@ -21,11 +21,13 @@ The download script retrieves the historical load archive from its original sour
 Open [Operator](http://127.0.0.1:8780/operator) and [Apartment manager](http://127.0.0.1:8780/manager).
 In Operator, load the saved forecast, start a browser run and issue the advisory. Open the manager link and accept the plan.
 Open the [campus view](http://127.0.0.1:8780/web/campus.html), create the demo, and follow its next-step guide.
+In the campus view, open **Live demand comparison** or **Monthly peak and billing replay**. Use **Jump to month end** for the final estimates.
 
 ## Screenshots
 
-![meter discrepancy](docs/screenshots/meter-discrepancy.png)
 ![campus](docs/screenshots/campus.png)
+![monthly campus](docs/screenshots/monthly-campus.png)
+![monthly building](docs/screenshots/monthly-building.png)
 
 ## What the numbers represent
 

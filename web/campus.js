@@ -26,6 +26,32 @@
   let gen = 0;
   let polling = null;
   let approved = null;     // Set of approved window starts
+  let fast = false;
+  let pauseFast = false;
+  let traces = {};
+  let traceKey = null;
+  let traceWait = null;
+
+  async function refreshDemand() {
+    if (!$('live-demand').open || !allRuns() || traceWait) return;
+    if (!C.APARTMENTS.every((a) => states[a]?.run_id === runOf(a))) return;
+    const key = JSON.stringify(C.APARTMENTS.map((a) => [runOf(a), states[a].revision, states[a].clock.interval_index]));
+    if (traceKey === key) {
+      NW_CAMPUS_DEMAND.live(traces, selected, group.interval);
+      return;
+    }
+    const g = group, my = gen;
+    const wait = Promise.all(C.APARTMENTS.map(async (a) => [
+      a, await NW_API.demandTrace(runOf(a)).catch((e) => ({ error: fmtError(e) })),
+    ]));
+    traceWait = wait;
+    const pairs = await wait;
+    if (traceWait === wait) traceWait = null;
+    if (my !== gen || g !== group) return;
+    traces = Object.fromEntries(pairs);
+    traceKey = pairs.some(([, t]) => !t.run_id) ? null : key;
+    NW_CAMPUS_DEMAND.live(traces, selected, group.interval);
+  }
 
   const put = (id, content) => { $(id).innerHTML = String(content); };
   const attr = (s) => html([s]);
@@ -55,7 +81,9 @@
       <div class="label">Demo group ${group ? html`<code data-testid="group-id">${group.group_id}</code>, scenario ${group.scenario_id}` : 'not created yet'}</div>
       <div class="big" data-testid="next-step">${nextStep()}</div>
       ${group ? html`<p>Group interval <span data-testid="group-interval">${group.interval}</span> of ${group.clock.horizon_intervals}, model time ${fmtTime(intervalTime(group.clock, group.interval))}.</p>` : ''}
-      <p class="label">Switching is simulated in this browser. NivaWatt does not operate any equipment.</p>`);
+      <p class="label">Switching is simulated in this browser. NivaWatt does not operate any equipment.</p>
+      <p class="demo-links">${allRuns() ? html`<a href="#live-demand" data-act="open-live">Live demand comparison</a>` : ''}
+        <a href="#billing-replay" data-act="open-billing">Monthly peak and billing replay</a></p>`);
   }
 
   // ---------- setup ----------
@@ -73,7 +101,7 @@
       </tbody></table>
       ${allRuns() ? '' : html`<div class="buttons"><button class="primary" data-act="create" ${busy ? attr('disabled') : ''}>Finish setup (resumes without duplicates)</button></div>`}
       <p class="muted">Forecast ${group.forecast.forecast_id}, clock start ${fmtTime(group.clock.clock_start_utc)}. The group record lives in this browser; resuming with the same group ID returns the same runs.</p>
-      <div class="buttons"><button class="decline" data-act="forget">Start a new group</button></div>`);
+      <div class="buttons"><button class="decline" data-act="forget" ${fast || ctl.inFlight ? attr('disabled') : ''}>Start a new group</button></div>`);
   }
 
   async function createOrResume(gid) {
@@ -184,7 +212,7 @@
 
   function renderControls() {
     if (!inputs) inputs = Object.fromEntries(C.APARTMENTS.map((a) => [a, { pump: 'OFF', ev: 'OFF', fault: 'none' }]));
-    const sel = (a, field, options) => html`<select data-apt="${a}" data-field="${field}" aria-label="${a} ${field}" ${group.pending ? attr('disabled') : ''}>
+    const sel = (a, field, options) => html`<select data-apt="${a}" data-field="${field}" aria-label="${a} ${field}" ${group.pending || fast ? attr('disabled') : ''}>
       ${options.map(([v, label]) => html`<option value="${v}" ${inputs[a][field] === v ? attr('selected') : ''}>${label}</option>`)}</select>`;
     const note = advanceNote;
     put('controls', html`<h2>Simulated equipment and the group clock</h2>
@@ -194,9 +222,12 @@
           <td>${sel(a, 'fault', Object.entries(C.FAULTS).map(([k, v]) => [k, v.label]))}</td></tr>`)}
       </tbody></table>
       <div class="buttons">
-        <button data-act="fill" ${group.pending || !delivered() ? attr('disabled') : ''}>Set switches to accepted plans</button>
-        <button class="primary" data-act="advance" ${ctl.inFlight || group.pending || !delivered() ? attr('disabled') : ''}>Advance all buildings by 15 minutes</button>
+        <button data-act="fill" ${fast || group.pending || !delivered() ? attr('disabled') : ''}>Set switches to accepted plans</button>
+        <button class="primary" data-act="advance" ${fast || ctl.inFlight || group.pending || !delivered() || group.interval >= group.clock.horizon_intervals ? attr('disabled') : ''}>Advance all buildings by 15 minutes</button>
+        ${fast ? html`<button data-act="pause-fast" ${pauseFast ? attr('disabled') : ''}>Pause after current interval</button>` :
+          html`<button data-act="fast" ${ctl.inFlight || group.pending || !delivered() || group.interval >= group.clock.horizon_intervals ? attr('disabled') : ''}>Fast-forward 1 hour on accepted plans</button>`}
       </div>
+      <p class="muted">Fast-forward uses normal readings and stops for manager decisions, when an interval fails, or at the end of the run.</p>
       ${ctl.inFlight ? html`<p role="status" data-testid="advance-status">Advancing interval ${group.interval}. One group advance at a time.</p>` : ''}
       ${note?.status === 'advanced' ? html`<p data-testid="advance-status">All four buildings advanced to interval ${note.interval}, confirmed against each server clock.</p>` : ''}
       ${group.pending ? html`<div class="notice tone-warn" data-testid="behind"><p><strong>Interval ${group.pending.interval} is not finished.</strong> ${(note?.behind || []).length ? `Behind: ${note.behind.join(', ')}.` : ''} The others kept their result. A retry resends the same request ID and switch snapshot.</p>
@@ -220,11 +251,41 @@
       } else if (advanceNote.status === 'partial') {
         toast('bad', `${advanceNote.behind.join(', ')} did not advance. The others kept their new interval.`);
       }
+      return advanceNote;
     } catch (e) {
       if (e.code !== 'ABORTED') toast('bad', fmtError(e));
     } finally {
       renderAll();
       refresh();
+    }
+  }
+
+  async function fastForward() {
+    if (fast || ctl.inFlight || group.pending || !delivered()) return;
+    const g = group, my = gen;
+    fast = true;
+    pauseFast = false;
+    renderAll();
+    try {
+      for (let i = 0; i < 4 && !pauseFast && my === gen && g === group && g.interval < g.clock.horizon_intervals; i++) {
+        const got = await Promise.all(C.APARTMENTS.map((a) => NW_API.state(runOf(a), a)));
+        if (pauseFast || my !== gen || g !== group) return;
+        if (got.some((s) => !s.active_commitment || s.pending_proposals?.length)) {
+          toast('warn', 'Fast-forward paused for a manager decision. Review the waiting plans before continuing.');
+          break;
+        }
+        if (got.some((s) => s.clock.interval_index !== g.interval)) {
+          toast('warn', 'Fast-forward paused because the building clocks differ.');
+          break;
+        }
+        C.APARTMENTS.forEach((a, n) => { inputs[a] = { ...C.planSwitches(got[n]), fault: 'none' }; });
+        if ((await advance())?.status !== 'advanced') break;
+      }
+    } catch (e) {
+      if (my === gen && e.code !== 'ABORTED') toast('bad', fmtError(e));
+    } finally {
+      fast = false;
+      if (my === gen) renderAll();
     }
   }
 
@@ -253,6 +314,7 @@
     renderLinks();
     const editing = document.activeElement?.closest?.('#controls select');
     if (!editing) renderControls();
+    refreshDemand();
   }
 
   // ---------- polling: one at a time, dropped after sign-out ----------
@@ -288,15 +350,20 @@
     const b = ev.target.closest('[data-act]');
     if (!b || b.disabled) return;
     const act = b.dataset.act;
-    if (act === 'create') createOrResume();
+    if (act === 'open-live') $('live-demand').open = true;
+    else if (act === 'open-billing') $('billing-replay').open = true;
+    else if (act === 'create') createOrResume();
     else if (act === 'forget') { save(null); approved = null; inputs = null; advanceNote = null; Object.keys(states).forEach((k) => delete states[k]); $('campus-grid').innerHTML = ''; renderAll(); }
     else if (act === 'issue') issue();
-    else if (act === 'select') { selected = b.dataset.apt; renderCampus(); renderSide(); }
+    else if (act === 'select') { selected = b.dataset.apt; renderCampus(); renderSide(); refreshDemand(); }
     else if (act === 'fill') fillFromPlans();
     else if (act === 'advance') advance();
+    else if (act === 'fast') fastForward();
+    else if (act === 'pause-fast') { pauseFast = true; renderControls(); }
     else if (act === 'retry') advance(b.dataset.apt);
     else if (act === 'adopt') { group.interval = advanceNote.clocks.APT_1; group.pending = null; save(group); advanceNote = null; renderAll(); }
   });
+  $('live-demand').addEventListener('toggle', refreshDemand);
   document.addEventListener('change', (ev) => {
     const t = ev.target;
     if (t.dataset.field && inputs) inputs[t.dataset.apt][t.dataset.field] = t.value;
@@ -318,6 +385,7 @@
   }
   function showSignIn(message) {
     gen += 1;
+    fast = false;
     NW_API.abortAll();
     polling = null;
     $('app').hidden = true;

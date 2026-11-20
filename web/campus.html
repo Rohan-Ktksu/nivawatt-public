@@ -37,9 +37,42 @@
           <section class="panel" id="side" aria-live="polite"></section>
         </div>
         <section class="panel" id="controls"></section>
+        <details class="panel demand-panel" id="live-demand">
+          <summary>Live demand comparison</summary>
+          <div id="live-demand-content"></div>
+        </details>
         <section class="panel" id="forecast"></section>
         <section class="panel" id="links"></section>
       </div>
+      <details class="panel demand-panel" id="billing-replay">
+        <summary>Monthly peak and billing replay</summary>
+        <p id="billing-status"></p>
+        <div id="billing-replay-controls" hidden>
+          <div class="billing-controls">
+            <label class="field">Building
+              <select id="billing-view">
+                <option value="">Whole site</option>
+                <option>APT_1</option><option>APT_2</option><option>APT_3</option><option>APT_4</option>
+              </select>
+            </label>
+            <label class="field">Playback speed
+              <select id="billing-speed">
+                <option value="12">6 hours per tick</option>
+                <option value="48" selected>1 day per tick</option>
+                <option value="144">3 days per tick</option>
+              </select>
+            </label>
+            <div class="buttons"><button id="billing-play" type="button">Play month</button><button id="billing-end" type="button">Jump to month end</button></div>
+          </div>
+          <label class="field">Month progress
+            <input id="billing-position" type="range" min="1" step="1">
+          </label>
+          <p id="billing-time"></p>
+          <div id="billing-chart"></div>
+          <div class="scroll" id="billing-rows"></div>
+          <p class="muted">Excess windows count half-hours crossing each building’s contract demand. The modeled bill uses the monthly maximum once. Site peak is the maximum of the combined demand at the same time.</p>
+        </div>
+      </details>
       <section class="panel" id="setup"></section>
       <p><a href="/web/operator.html">Single-building operator page</a> · <button type="button" id="sign-out">Sign out</button></p>
     </div>
@@ -48,6 +81,7 @@
   <script src="/web/api.js"></script>
   <script src="/web/building.js"></script>
   <script src="/web/campus-core.js"></script>
+  <script src="/web/campus-demand.js"></script>
   <script src="/web/campus.js"></script>
 </body>
 </html>
