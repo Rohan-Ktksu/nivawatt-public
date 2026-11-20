@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+node_modules/
+.env*
+config/local.json
+data/raw/
+*.db
+*.sqlite*
+*.log
+tests/ui/screenshots/
