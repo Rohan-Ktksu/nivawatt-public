@@ -46,6 +46,24 @@ class Api:
         return f"emu-{tag}-{time.time_ns()}-{self.n}"
 
 
+def recovered_note(rec):
+    if not rec:
+        return ""
+    return (f", recovered {rec['recovered_unassigned_model_kwh']}{'+ (restart in gap)' if rec['lower_bound'] else ''}"
+            f" kWh unassigned over {rec['missing_intervals']} missing")
+
+
+def meter_line(m):
+    if not m:
+        return "none"
+    parts = [f"{c['channel_id']}={c['average_power_model_kw']}kW/{c['interval_energy_model_kwh']}kWh"
+             f"(cum {c['cumulative_energy_model_kwh']}, {c['quality']}{', restart' if c.get('counter_restarts') else ''}"
+             f"{recovered_note(c.get('recovered_after_missing'))})"
+             for c in m["channels"]]
+    t = m["total"]
+    return " ".join(parts) + f" total={t['average_power_model_kw'] if t['complete'] else 'INCOMPLETE ' + ','.join(t['missing_channels'])}"
+
+
 def ints(s):
     return {int(x) for x in s.split(",") if x.strip()} if s else set()
 
@@ -56,18 +74,24 @@ def main():
     ap.add_argument("--profile", default="apartment_reference")
     ap.add_argument("--run-id")
     ap.add_argument("--new-run", action="store_true", help="create a telemetry run matching the profile")
-    ap.add_argument("--intervals", type=int, default=6)
+    ap.add_argument("--intervals", type=int, default=96, help="stops earlier at the end of the run horizon")
     ap.add_argument("--fast", action="store_true", help="do not wait in real time (device clock still advances)")
     ap.add_argument("--follow-plan", action="store_true", help="the person sets switches to the accepted plan")
     ap.add_argument("--miss", default="", help="intervals where the person leaves everything OFF, e.g. 1,3")
     ap.add_argument("--dry", default="", help="intervals with no source water (pump runs dry)")
     ap.add_argument("--drop", default="", help="intervals where no readings reach the server")
     ap.add_argument("--reboot", default="", help="intervals that start with a device reboot")
+    ap.add_argument("--charger2", default="", help="intervals where a second charger on the EV group also draws")
+    ap.add_argument("--charger-kw", default="", help="per-charger draw override in kW, e.g. charger-1=1.5,charger-2=1.5")
+    ap.add_argument("--lose-channel", default="", help="meter channel and intervals with no channel data, e.g. ev_group:3,4")
     ap.add_argument("--duplicate", action="store_true", help="resend each interval's last reading (must be ignored)")
     ap.add_argument("--accept", action="store_true", help="demo harness: accept any pending proposal as the manager")
     ap.add_argument("--claim", action="store_true", help="demo harness: report done for every instructed action")
     ap.add_argument("--interactive", action="store_true", help="type switch commands before each interval")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--ev-kwh", type=float, help="new run: requested EV energy in model kWh (default: plant default)")
+    ap.add_argument("--ev-window", default="", help="new run: EV arrival,departure intervals, e.g. 0,32")
+    ap.add_argument("--json-log", default="", help="write one JSON line per interval (state fields) to this file")
     a = ap.parse_args()
 
     codes = json.loads((ROOT / "config" / "local.json").read_text())
@@ -86,7 +110,13 @@ def main():
         params = {"observation_source": "telemetry", "tank_max_l": pf["tank"]["capacity_l"],
                   "tank_min_l": pf["tank"]["reserve_l"], "tank_init_l": pf["tank"]["initial_l"],
                   "pump_model_kw": pf["pump"]["rated_kw"], "pump_inflow_lph": pf["pump"]["flow_lpm"] * 60,
-                  "ev_charger_model_kw": pf["ev_charger"]["rated_kw"]}
+                  "ev_charger_model_kw": pf["ev_charger"]["rated_kw"],
+                  # the emulator's meter counts simulated energy with simulated timestamps; the run must say so
+                  "meter_clock": "simulated"}
+        if a.ev_kwh is not None or a.ev_window:
+            arr, dep = (int(x) for x in (a.ev_window or "0,32").split(","))
+            params["ev_sessions"] = [{"ev_id": "EV_1", "arrival_interval": arr, "departure_interval": dep,
+                                      "requested_model_kwh": a.ev_kwh if a.ev_kwh is not None else 10}]
         run = api.call("POST", "/runs", {"request_id": api.rid("run"), "clock_start_utc": start,
                                          "apartment_params": params}, op)[1]["run_id"]
         if mg:
@@ -95,31 +125,56 @@ def main():
     if not run:
         raise SystemExit("give --run-id or --new-run")
 
-    emu = DeviceEmulator(pf, run, apt, dev_id, a.seed)
     st = api.call("GET", f"/state?run_id={run}&apartment_id={apt}", token=op)[1]
+    if st.get("observation_source") != "telemetry" or st.get("meter_clock") != "simulated":
+        raise SystemExit(f"run {run} is not an emulator telemetry run (observation_source={st.get('observation_source')}, "
+                         f"meter_clock={st.get('meter_clock')}). Create it with --new-run, or with apartment_params "
+                         "observation_source=telemetry and meter_clock=simulated.")
+    emu = DeviceEmulator(pf, run, apt, dev_id, a.seed, clock_start_utc=st["clock"]["clock_start_utc"])
     emu.ev_requested_kwh = sum(s["requested_model_kwh"] for s in st["apartment"]["ev_sessions"])
     misses, dry, drop, reboot = ints(a.miss), ints(a.dry), ints(a.drop), ints(a.reboot)
+    charger2 = ints(a.charger2)
+    for part in filter(None, a.charger_kw.split(",")):
+        k, v = part.split("=")
+        emu.charger_kw[k.strip()] = float(v)
+    lose_ch, lose_at = (a.lose_channel.split(":", 1) + [""])[:2] if a.lose_channel else ("", "")
+    lose_at = ints(lose_at)
     secs = pf["emulator"]["seconds_per_model_interval"]
 
-    for _ in range(a.intervals):
+    def current_plan():
+        """Latest state and this interval's committed action, read now (the manager may have just accepted)."""
         st = api.call("GET", f"/state?run_id={run}&apartment_id={apt}", token=op)[1]
-        i = st["clock"]["interval_index"]
-        if i >= st["clock"]["horizon_intervals"]:
-            break
         if a.accept and st["pending_proposals"]:
             p = st["pending_proposals"][-1]
             st = api.call("POST", f"/proposals/{p['proposal_id']}/decision",
                           {"run_id": run, "expected_revision": p["revision"], "decision": "ACCEPT",
                            "option_id": p["options"][0]["option_id"], "request_id": api.rid("acc")}, mg)[1]
         com = st["active_commitment"]
+        i = st["clock"]["interval_index"]
         act = next((x for x in com["option"]["actions"] if x["interval_index"] == i), None) if com else None
+        return st, com, act
+
+    def describe(act):
+        if not act:
+            return "no accepted plan yet"
+        return f"pump {act['pump']}, ev {'ON' if act['ev'] != 'OFF' else 'OFF'}"
+
+    for _ in range(a.intervals):
+        st, com, act = current_plan()
+        i = st["clock"]["interval_index"]
+        if i >= st["clock"]["horizon_intervals"]:
+            break
+        cmd = ""
+        if a.interactive:
+            follow = " Enter = follow the latest accepted plan;" if a.follow_plan else " Enter = keep switches;"
+            cmd = input(f"[interval {i}] plan now: {describe(act)}.{follow} or type e.g. 'ev off', 'pump on', "
+                        f"'dry', 'drop', 'reboot' > ").strip().lower()
+            st, com, act = current_plan()  # re-read: an acceptance on the phone while waiting must count
         if a.follow_plan and act:
             emu.pump_on, emu.ev_on = act["pump"] == "ON", act["ev"] != "OFF"
         if i in misses:
             emu.pump_on = emu.ev_on = False
-        if a.interactive:
-            cmd = input(f"[interval {i}] plan={act} switches pump={'ON' if emu.pump_on else 'OFF'} "
-                        f"ev={'ON' if emu.ev_on else 'OFF'} > ").strip().lower()
+        if cmd:  # typed commands override the plan for this interval
             for part in cmd.split(","):
                 w = part.split()
                 if w[:1] == ["pump"] and len(w) == 2:
@@ -141,6 +196,8 @@ def main():
         if i in reboot:
             emu.reboot()
         emu.dry = i in dry
+        emu.chargers["charger-2"] = i in charger2
+        emu.lost_channels = {lose_ch} if i in lose_at else set()
         samples = emu.interval_samples(i)
         statuses = {}
         if i not in drop:
@@ -157,11 +214,24 @@ def main():
         res = api.call("POST", f"/runs/{run}/step", {"request_id": api.rid("step")}, op)[1]
         ex = res["execution"] or {}
         obs = res["state"]["observation"] or {}
+        ds = res["state"].get("discrepancy_status") or {}
+        rv = ds.get("revision") or {}
         print(f"interval {i:>2} | switches pump={'ON ' if emu.pump_on else 'OFF'} ev={'ON ' if emu.ev_on else 'OFF'}"
               f"{' DRY' if emu.dry else ''}{' DROPPED' if i in drop else ''} | sent {statuses or 0}"
               f" | tank {obs.get('tank_l')} L, pump {obs.get('pump_model_kw')} kW, ev {obs.get('ev_model_kw')} kW"
+              f" | meter {meter_line(obs.get('meter'))}"
               f" | {ex.get('observation_status', 'no commitment')} {ex.get('reason', '')}"
-              f" | pending {[pp['reason'] for pp in res['state']['pending_proposals']]}")
+              f" | pending {[pp['reason'] for pp in res['state']['pending_proposals']]}"
+              f" | revision {rv.get('status')}{' (' + rv['gate_decision'] + ')' if rv.get('gate_decision') else ''}")
+        if a.json_log:
+            with open(a.json_log, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"interval": i, "switches": {"pump": emu.pump_on, "ev": emu.ev_on},
+                                    "observation_status": ex.get("observation_status"), "reason": ex.get("reason"),
+                                    "ev_model_kw": obs.get("ev_model_kw"), "tank_l": obs.get("tank_l"),
+                                    "meter": obs.get("meter"),
+                                    "ev_energy": res["state"]["readiness"].get("ev_energy"),
+                                    "pending": [pp["reason"] for pp in res["state"]["pending_proposals"]],
+                                    "discrepancy_status": ds}) + "\n")
     print(f"done. report: GET /api/v1/runs/{run}/report  (all values synthetic)")
 
 

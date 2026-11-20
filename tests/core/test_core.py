@@ -324,6 +324,10 @@ def test_experiment_fairness_properties():
     assert summary["missed_ev_overlapping_pump"]["paired_branch_minus_aggregate"]["ev_shortfall_model_kwh"]["baseline_better_runs"] == 0
     # false done on EV: acknowledgement never beats measurement on EV shortfall
     assert pm("missed_ev_false_done", "ev_shortfall_model_kwh")["baseline_better_runs"] == 0
+    # honest reporting: acknowledgement already knows about the miss, so measurement adds nothing
+    assert pm("honest_misses", "ev_shortfall_model_kwh")["ties"] == 5
+    # imperfect sensing has a visible cost: replans that follow no missed action are counted, not hidden
+    assert any(r["replans_without_missed_action"] > 0 for r in rows if r["scenario"] == "noisy_sensors_mixed_reports")
     # infeasible request: shortfall visible for every policy, no fake completion
     assert all(r["ev_shortfall_model_kwh"] > 0 for r in rows if r["scenario"] == "infeasible_ev")
     # physical bounds in every run
@@ -444,13 +448,22 @@ def test_emulator_physics():
     assert DeviceEmulator(load_profile(), "r").boot_prefix != e.boot_prefix  # new process, new boot id
 
 
-def telemetry_run(c):
+def telemetry_run(c, quiet=False, ev_kwh=None):
+    """quiet: the emulator's power noise is set to 0 so energy figures are exact (deterministic thresholds)."""
     from simulation.device_emulator import DeviceEmulator, load_profile
     pf = load_profile()
-    run = new_run(c, observation_source="telemetry", pump_inflow_lph=pf["pump"]["flow_lpm"] * 60)
+    if quiet:
+        pf["sensor_noise"]["power_fraction_sd"] = 0.0
+    extra = {} if ev_kwh is None else {"ev_sessions": [{"ev_id": "EV_1", "arrival_interval": 0, "departure_interval": 32,
+                                                         "requested_model_kwh": ev_kwh}]}
+    run = new_run(c, observation_source="telemetry", pump_inflow_lph=pf["pump"]["flow_lpm"] * 60,
+                  meter_clock="simulated", **extra)
     p = c.post("/api/v1/requirements", headers=c.mgr, json={"run_id": run, "request_id": f"q-{run}", "ev_sessions": []}).json()["proposal"]
     assert accept(c, run, p, f"a-{run}").status_code == 200
-    return run, DeviceEmulator(pf, run, device_id="bench-1")
+    emu = DeviceEmulator(pf, run, device_id="bench-1", clock_start_utc=FS)
+    if ev_kwh is not None:
+        emu.ev_requested_kwh = ev_kwh
+    return run, emu
 
 
 def send(c, emu, i, skip=False, dup=False):
@@ -464,7 +477,9 @@ def send(c, emu, i, skip=False, dup=False):
 
 def test_telemetry_run_detects_false_done_and_dry_pump(api):
     c = api
-    run, emu = telemetry_run(c)
+    # Noise-free emulator and a 10.5 kWh request: a one-interval miss leaves a 600 Wh predicted shortfall, well above
+    # the revision gate's 100 Wh rule, so a revision must be proposed (see test_revision_materiality_threshold).
+    run, emu = telemetry_run(c, quiet=True, ev_kwh=10.5)
     assert c.post(f"/api/v1/runs/{run}/step", headers=c.op,
                   json={"request_id": "x", "actual_switches": {"pump": "ON"}}).status_code == 422
     assert state(c, run)["observation_source"] == "telemetry"
@@ -500,8 +515,16 @@ def test_telemetry_run_detects_false_done_and_dry_pump(api):
     out = send(c, emu, 3)
     assert out["state"]["observation"]["raw_bench"]["device_sessions"] == [f"{emu.boot_prefix}-2"]
     rep = c.get(f"/api/v1/runs/{run}/report", headers=c.op).json()
-    assert rep["provenance"]["plant"].startswith("device telemetry") and rep["unmet_withdrawal_l"] is None
+    assert rep["provenance"]["plant"].startswith("device telemetry from the emulator") and "measured by" not in rep["provenance"]["plant"]
+    assert rep["unmet_withdrawal_l"] is None
     assert rep["observation_coverage"]["valid"] == 3 and rep["observation_coverage"]["intervals_elapsed"] == 4
+
+
+def test_telemetry_report_before_first_reading_is_unknown(api):
+    c = api
+    run, _ = telemetry_run(c)
+    rep = c.get(f"/api/v1/runs/{run}/report", headers=c.op).json()
+    assert rep["unmet_withdrawal_l"] is None and "synthetic" in rep["provenance"]["plant"]
 
 
 def test_telemetry_wrong_apartment_rejected(api):
@@ -524,3 +547,235 @@ def test_telemetry_dry_pump_is_deviation(api):
     out = send(c, emu, k)
     assert out["execution"]["observation_status"] == "OBSERVED_DEVIATION"
     assert out["execution"]["reason"] == "PUMP_POWER_WITHOUT_WATER_DELIVERY"
+
+
+def _plan(overrides=None, tank=None, pump_on=False):
+    from simulation import experiment
+    p = plant.make_params(overrides or {})
+    return rules.plan({"interval_index": 0, "tank_l": p["tank_init_l"] if tank is None else tank, "pump_on": pump_on},
+                      {"peak_intervals": list(range(40, 52))},
+                      {"ev_sessions": [{**s, "remaining_model_kwh": s["requested_model_kwh"]} for s in p["ev_sessions"]]},
+                      experiment.constraints(p))["options"][0], p
+
+
+def test_scheduler_plans_hour_long_pump_runs_with_reserve_margin():
+    o, p = _plan()
+    on = [a["interval_index"] for a in o["actions"] if a["pump"] == "ON"]
+    runs, cur = [], []
+    for i in on:
+        if cur and i != cur[-1] + 1:
+            runs.append(cur)
+            cur = []
+        cur.append(i)
+    runs.append(cur)
+    assert o["pump_starts"]["planned"] == len(runs) <= 3  # was 8 single-interval starts
+    assert all(len(r) >= rules.MIN_RUN for r in runs)
+    assert o["predicted_min_tank_model_l"] > p["tank_min_l"]  # low point above the reserve, not on it
+    assert o["water_shortfall"]["intervals_below_reserve"] == 0 and o["ev_shortfall_model_kwh"]["EV_1"] == 0
+    assert o["predicted_peak_window_energy_model_kwh"] == 0 and o["predicted_peak_model_kw"] <= p["allowance_model_kw"]
+
+
+def test_scheduler_runs_never_overflow_and_fall_back_near_full():
+    o, p = _plan(tank=9800)  # nearly full: a 1-hour run would overflow, so planning must not
+    assert max(o["water_trajectory_model_l"]) <= p["tank_max_l"]
+    assert o["water_shortfall"]["intervals_below_reserve"] == 0
+    o2, _ = _plan(tank=3050, pump_on=True)  # pump running now: extending it is preferred over a later start
+    assert o2["actions"][0]["pump"] == "ON" and o2["pump_starts"]["planned"] <= 3
+
+
+# ---------- pump duration rules (demonstration assumptions) ----------
+def test_plant_restart_lockout_short_runs_and_safety_precedence():
+    p = plant.make_params({"tank_init_l": 5000, "source_outage_intervals": [2], "pump_dry_run_protection": True})
+    t = plant.initial_truth(p)
+    t, r0 = plant.step(t, p, 0, True, False)
+    t, r1 = plant.step(t, p, 1, True, False)
+    t, r2 = plant.step(t, p, 2, True, False)  # outage with protection: safety stop although the minimum run is not met
+    assert r2["pump_model_kw"] == 0 and r2["pump_safety_stop"] == "NO_SOURCE_WATER" and r2["inflow_l"] == 0
+    t, r3 = plant.step(t, p, 3, True, False)  # the safety stop started the off-timer: restart is locked out
+    assert r3["pump_model_kw"] == 0 and r3["pump_restart_lockout"]
+    t, r4 = plant.step(t, p, 4, True, False)
+    assert r4["pump_model_kw"] > 0
+    t, r5 = plant.step(t, p, 5, False, False)  # manual OFF after one interval is honoured, counted as short
+    assert r5["pump_model_kw"] == 0 and r5["pump_short_run_stop"]
+    full = plant.make_params({"tank_init_l": 10000})
+    _, rf = plant.step(plant.initial_truth(full), full, 0, True, False)
+    assert rf["pump_model_kw"] == 0 and rf["pump_safety_stop"] == "TANK_FULL_CUTOFF"
+    unprot = plant.make_params({"source_outage_intervals": [0]})  # no protection: pump runs dry, draws power
+    _, ru = plant.step(plant.initial_truth(unprot), unprot, 0, True, False)
+    assert ru["pump_model_kw"] > 0 and ru["inflow_l"] == 0 and ru["pump_safety_stop"] is None
+
+
+def test_scheduler_respects_min_on_min_off_and_safety():
+    o, p = _plan()
+    on = [a["interval_index"] for a in o["actions"] if a["pump"] == "ON"]
+    runs = [[on[0]]]
+    for i in on[1:]:
+        runs[-1].append(i) if i == runs[-1][-1] + 1 else runs.append([i])
+    assert all(len(r) >= p["pump_min_on_intervals"] for r in runs) and not o["pump_duration_exceptions"]
+    assert all(b[0] - a[-1] - 1 >= p["pump_min_off_intervals"] for a, b in zip(runs, runs[1:]))
+    assert o["pump_duration_rules"]["basis"].startswith("demonstration")
+    from simulation import experiment
+    cons = experiment.constraints(p)
+    reqs = {"ev_sessions": []}
+    # pump observed running for 1 interval: it stays planned ON to the minimum run...
+    run = rules.plan({"interval_index": 10, "tank_l": 4000, "pump_on": True, "pump_run_intervals": 1}, {}, reqs, cons)
+    assert [a["pump"] for a in run["options"][0]["actions"][:3]] == ["ON"] * 3
+    # ...unless a known outage stops it (safety takes precedence over the minimum run)
+    cut = rules.plan({"interval_index": 10, "tank_l": 4000, "pump_on": True, "pump_run_intervals": 1},
+                     {"source_water_available": {11: False}}, reqs, cons)
+    assert [a["pump"] for a in cut["options"][0]["actions"][:2]] == ["ON", "OFF"]
+    # pump stopped one interval ago: no start inside the minimum off time
+    lock = rules.plan({"interval_index": 10, "tank_l": 3010, "pump_on": False, "pump_off_intervals": 1}, {}, reqs, cons)
+    assert lock["options"][0]["actions"][0]["pump"] == "OFF"
+
+
+def test_judge_scenarios_pass(tmp_path):
+    import os
+    import subprocess
+    import sys
+    env = {**os.environ, "NIVAWATT_JUDGE_OUT": str(tmp_path)}
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    r = subprocess.run([sys.executable, "scripts/judge_scenarios.py"], cwd=root, env=env, capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]
+    res = json.loads((tmp_path / "summary.json").read_text())["scenarios"]
+    assert {s["scenario"] for s in res} >= {"normal", "false_done_pump_left_off", "delayed_pump_start", "missing_readings",
+                                            "outage_during_run_protected", "outage_during_run_unprotected"}
+
+
+# ---------- revision gate and readiness margin ----------
+def _gate_case():
+    from simulation import experiment
+    p = plant.make_params({"reserve_margin_l": 0})
+    c = experiment.constraints(p)
+    reqs = {"ev_sessions": [{**s, "remaining_model_kwh": s["requested_model_kwh"]} for s in p["ev_sessions"]]}
+    st = {"interval_index": 0, "tank_l": p["tank_init_l"], "pump_on": False}
+    base = rules.plan(st, {}, reqs, c)["options"][0]["actions"]
+    return p, c, reqs, st, base
+
+
+def test_revision_gate_decisions():
+    from scheduler import revision
+    p, c, reqs, st, base = _gate_case()
+    assert revision.assess(base, base, st, c, reqs, {}, 0)["decision"] == "SUPPRESSED_EQUIVALENT"
+    far = [dict(a) for a in base]
+    far[60] = {**far[60], "pump": "OFF" if far[60]["pump"] == "ON" else "ON"}  # change only 15 h ahead
+    assert revision.assess(base, far, st, c, reqs, {}, None)["decision"] in ("SUPPRESSED_NOT_ACTIONABLE",)
+    near = [dict(a) for a in base]
+    near[2] = {**near[2], "pump": "ON"}  # actionable, no service gain, inside cooldown
+    assert revision.assess(base, near, st, c, reqs, {}, 0)["decision"] == "DEFERRED_COOLDOWN"
+    # active plan with no pumping breaches the reserve soon: the fix is urgent even inside the cooldown
+    low = {**st, "tank_l": 3300}
+    dry = [{**a, "pump": "OFF"} for a in base]
+    fix = rules.plan(low, {}, reqs, c)["options"][0]["actions"]
+    g = revision.assess(dry, fix, low, c, reqs, {}, 0)
+    assert g["decision"] == "PROPOSE" and g["urgent"]
+    # EV energy that would be missed is urgent too
+    no_ev = [{**a, "ev": "OFF"} for a in base]
+    assert revision.assess(no_ev, base, st, c, reqs, {}, 0)["urgent"]
+
+
+def test_missing_readings_alone_do_not_create_acceptance_burden():
+    from simulation import experiment
+    rows, _, _ = experiment.run(scenarios=["stale_telemetry"], policies=["ack_replan", "measured_replan"], n_seeds=5)
+    ack = [r["manager_acceptances"] for r in rows if r["policy"] == "ack_replan"]
+    meas = [r["manager_acceptances"] for r in rows if r["policy"] == "measured_replan"]
+    assert max(ack) == 1, ack  # acknowledgement-only: missing readings alone never ask again
+    assert sum(meas) / len(meas) <= 6, meas  # was about 48 per day before the evidence and revision gates
+    assert all(r["unverified_intervals"] > 0 for r in rows)  # uncertainty stays visible
+
+
+def test_readiness_margin_and_constraint_report():
+    o0, p = _plan({"reserve_margin_l": 0})
+    o1, _ = _plan({"reserve_margin_l": 1000})
+    assert o1["predicted_min_tank_model_l"] >= p["tank_min_l"] + 1000 > o0["predicted_min_tank_model_l"]
+    assert sum(a["pump"] == "ON" for a in o1["actions"]) == sum(a["pump"] == "ON" for a in o0["actions"])
+    classes = [r["class"] for r in o1["constraint_report"]]
+    assert classes == ["physical_safety", "equipment_limits", "allowance", "service_water_critical",
+                       "service_water_reserve", "service_ev_deadline", "advisory_windows", "readiness_margin"]
+    o2, _ = _plan({"reserve_margin_l": 1000, "tank_init_l": 3200})  # cannot reach the margin early: reported
+    rm = next(r for r in o2["constraint_report"] if r["class"] == "readiness_margin")
+    assert rm["status"] in ("not_met", "dropped_to_protect_service") and o2["water_shortfall"]["intervals_below_reserve"] == 0
+
+
+def test_allowance_binding_rescheduling_and_operator_intervention():
+    ev_day = {"ev_sessions": [{"ev_id": "EV_1", "arrival_interval": 36, "departure_interval": 72, "requested_model_kwh": 10}]}
+    o, _ = _plan({**ev_day, "allowance_model_kw": 4.0})  # conflict resolved by rescheduling within the cap
+    al = next(r for r in o["constraint_report"] if r["class"] == "allowance")
+    assert al["status"] == "binding_resolved_by_rescheduling" and o["operator_intervention"] is None
+    assert o["predicted_peak_model_kw"] <= 4.0 and o["ev_shortfall_model_kwh"]["EV_1"] == 0
+    o, _ = _plan({"allowance_model_kw": 3.0})  # charger 3.3 kW can never run under a 3 kW cap
+    oi = o["operator_intervention"]
+    assert o["predicted_peak_model_kw"] <= 3.0  # the plan never exceeds the cap
+    assert oi["reason"] == "ALLOWANCE_BLOCKS_SERVICE" and oi["binding_constraint"] == "allowance"
+    assert oi["allowance_that_would_reduce_shortfall_model_kw"] == 3.3
+    assert not o["requires_operator_exception"]  # contract meaning: the option itself never exceeds the cap
+    assert oi["shortfall_within_allowance"]["ev_shortfall_model_kwh"] == 10 and "NOT VERIFIED" in oi["physical_check"]
+    o, _ = _plan({"allowance_model_kw": 3.0, "verified_electrical_limit_model_kw": 3.0})  # never above a verified limit
+    assert o["operator_intervention"]["reason"] == "SERVICE_INFEASIBLE_WITHIN_LIMITS"
+    assert o["operator_intervention"]["allowance_that_would_reduce_shortfall_model_kw"] is None
+    o, _ = _plan({"ev_sessions": [{"ev_id": "EV_1", "arrival_interval": 0, "departure_interval": 32,
+                                   "requested_model_kwh": 40}]})  # not fixable by any allowance
+    assert o["operator_intervention"]["reason"] == "SERVICE_INFEASIBLE_WITHIN_LIMITS" and not o["requires_operator_exception"]
+
+
+def _false_done_first_ev(c, kwh, tag):
+    ev = [{"ev_id": "EV_1", "arrival_interval": 0, "departure_interval": 32, "requested_model_kwh": kwh}]
+    run = new_run(c, ev_sessions=ev)
+    prop = c.post("/api/v1/requirements", headers=c.mgr, json={"run_id": run, "request_id": f"q-{tag}",
+                                                               "ev_sessions": []}).json()["proposal"]
+    com = accept(c, run, prop, f"a-{tag}").json()["active_commitment"]
+    assert com["option"]["actions"][0]["ev"] == "EV_1"
+    c.post("/api/v1/execution/claims", headers=c.mgr, json={"run_id": run, "commitment_id": com["commitment_id"],
+           "interval_index": 0, "action_id": f"{com['commitment_id']}:0:ev", "request_id": f"cl-{tag}"})
+    out = step(c, run, f"s-{tag}", actual_switches={"pump": "OFF", "ev": "OFF"})
+    return run, com, out
+
+
+def test_discrepancy_states_minor_miss_vs_material_miss(api):
+    c = api
+    # A: 9.95 kWh -> plan books 12 full + 1 partial interval; one missed interval leaves ~50 Wh predicted shortfall
+    run, com, out = _false_done_first_ev(c, 9.95, "A")
+    ds = out["state"]["discrepancy_status"]
+    assert out["execution"]["observation_status"] == "OBSERVED_DEVIATION"
+    assert ds["execution_discrepancy"]["detected"] and ds["execution_discrepancy"]["reason"] == "EV_CHARGING_NOT_OBSERVED"
+    assert not out["state"]["pending_proposals"] and ds["revision"]["status"] in ("DEFERRED", "NOT_NEEDED")
+    assert ds["revision"]["explanation"]  # the UI can say why no acceptance is requested
+    assert out["state"]["active_commitment"]["commitment_id"] == com["commitment_id"]
+    # B: 10 kWh -> the same miss leaves exactly 100 Wh predicted shortfall: material under the whole-Wh rule
+    run, com, out = _false_done_first_ev(c, 10, "B")
+    ds = out["state"]["discrepancy_status"]
+    assert ds["execution_discrepancy"]["detected"] and ds["revision"]["status"] == "AWAITING_MANAGER_ACCEPTANCE"
+    assert ds["revision"]["current_plan_predicted"]["ev_shortfall_model_kwh"] == 0.1
+    assert out["state"]["active_commitment"]["commitment_id"] == com["commitment_id"]  # not active until accepted
+
+
+@pytest.mark.parametrize("kwh,gain_wh,proposed", [(9.95, 50, False), (10.0, 100, True), (10.5, 600, True)])
+def test_revision_materiality_threshold(api, kwh, gain_wh, proposed):
+    """Deterministic (simulator, no noise): one missed EV interval; the gate proposes only at >= 100 Wh predicted gain.
+    The discrepancy is detected and recorded on both sides of the threshold."""
+    c = api
+    run = new_run(c, ev_sessions=[{"ev_id": "EV_1", "arrival_interval": 0, "departure_interval": 32, "requested_model_kwh": kwh}])
+    p = c.post("/api/v1/requirements", headers=c.mgr, json={"run_id": run, "request_id": f"q-{kwh}", "ev_sessions": []}).json()["proposal"]
+    assert accept(c, run, p, f"a-{kwh}").status_code == 200
+    acts = state(c, run)["active_commitment"]["option"]["actions"]
+    assert acts[3]["ev"] != "OFF"
+    for i in range(4):
+        a = acts[i]
+        ev = "OFF" if i == 3 else ("ON" if a["ev"] != "OFF" else "OFF")
+        out = c.post(f"/api/v1/runs/{run}/step", headers=c.op,
+                     json={"request_id": f"s-{kwh}-{i}", "actual_switches": {"pump": a["pump"], "ev": ev}}).json()
+    assert out["execution"]["observation_status"] == "OBSERVED_DEVIATION" and out["execution"]["reason"] == "EV_CHARGING_NOT_OBSERVED"
+    s = out["state"]
+    d = s["discrepancy_status"]["execution_discrepancy"]
+    assert d["detected"] and d["interval_index"] == 3
+    g = s["revision_gate"]
+    gain = round(g["active_prediction"]["ev_shortfall_model_kwh"] * 1000) - round(g["candidate_prediction"]["ev_shortfall_model_kwh"] * 1000)
+    assert gain == gain_wh
+    if proposed:
+        assert g["decision"] == "PROPOSE" and [x["reason"] for x in s["pending_proposals"]] == ["OBSERVED_DEVIATION"]
+        assert s["discrepancy_status"]["revision"]["status"] == "AWAITING_MANAGER_ACCEPTANCE"
+    else:
+        assert g["decision"] != "PROPOSE" and not s["pending_proposals"]
+        assert s["discrepancy_status"]["revision"]["status"] in ("DEFERRED", "NOT_NEEDED")
+        assert s["discrepancy_status"]["revision"]["explanation"]

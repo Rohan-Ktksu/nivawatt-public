@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NivaWatt campus demo</title>
+  <link rel="stylesheet" href="/web/style.css">
+</head>
+<body>
+  <div class="sim-banner"><p>Demonstration. Four separate apartment buildings, each a synthetic browser simulation. Not a BESCOM or KPTCL system.</p></div>
+  <header class="masthead">
+    <h1>Campus demo: four buildings</h1>
+    <p class="meta" id="meta"></p>
+  </header>
+  <main>
+    <div id="toast" role="status" aria-live="polite"></div>
+
+    <section class="panel" id="signin" hidden>
+      <h2>Sign in</h2>
+      <p class="muted">Operator access code. Local demonstration access, not a production login.</p>
+      <form id="signin-form">
+        <label class="field">Operator access code <input type="password" id="access-code" required autocomplete="off"></label>
+        <button class="primary" type="submit">Sign in</button>
+      </form>
+    </section>
+
+    <div class="stack" id="app" hidden>
+      <section class="panel next" id="top" aria-label="Demo group and next step"></section>
+      <div class="stack" id="group-ui" hidden>
+        <div class="columns wide-left">
+          <section class="panel" id="campus" aria-labelledby="campus-title">
+            <h2 id="campus-title">Campus</h2>
+            <div class="campus-grid" id="campus-grid"></div>
+            <p class="campus-total" id="campus-total"></p>
+            <p class="muted">Each building is drawn from its own meter and tank readings only. Accepting a plan switches nothing. Unknown means no usable reading, not off. Shared feeder capacity and coordinated campus scheduling are future work.</p>
+          </section>
+          <section class="panel" id="side" aria-live="polite"></section>
+        </div>
+        <section class="panel" id="controls"></section>
+        <section class="panel" id="forecast"></section>
+        <section class="panel" id="links"></section>
+      </div>
+      <section class="panel" id="setup"></section>
+      <p><a href="/web/operator.html">Single-building operator page</a> · <button type="button" id="sign-out">Sign out</button></p>
+    </div>
+  </main>
+  <script src="/web/ui.js"></script>
+  <script src="/web/api.js"></script>
+  <script src="/web/building.js"></script>
+  <script src="/web/campus-core.js"></script>
+  <script src="/web/campus.js"></script>
+</body>
+</html>

@@ -25,7 +25,29 @@
     </section>
 
     <div class="stack" id="app" hidden>
-      <section class="panel">
+      <section class="panel" id="demo-run">
+        <h2>Demo run</h2>
+        <p><a href="/web/campus.html" id="campus-link">Four-building campus demo</a> (four separate runs, browser simulation)</p>
+        <label class="field">Select a run
+          <select id="run-picker"></select>
+        </label>
+        <div id="run-link"></div>
+        <div class="demo-browser">
+          <h3>Create a browser simulation</h3>
+          <p class="muted">This starts a separate run controlled from this page. To continue an emulator run, use the picker above.</p>
+          <label class="field">Scenario
+            <select id="scenario">
+              <option value="branch">Separate pump and charger meters</option>
+              <option value="aggregate">One combined meter only</option>
+              <option value="dry">Water source fails: pump draws power, tank does not fill</option>
+              <option value="flats100_advisory_only">100-flat building (synthetic): advisory-only scheduler</option>
+              <option value="flats100_demand_aware_experimental">100-flat building (synthetic): demand-aware scheduler (experimental)</option>
+            </select>
+          </label>
+          <div class="buttons"><button id="create-run" type="button">Start browser run</button></div>
+        </div>
+      </section>
+      <section class="panel" id="forecast-panel">
         <h2>Regional forecast</h2>
         <form id="forecast-form">
           <div class="columns">
@@ -49,24 +71,9 @@
           <section class="panel" id="advisory"></section>
           <section class="panel" id="apartments"></section>
           <section class="panel" id="report"></section>
+          <section class="panel" id="billing"></section>
         </div>
         <div class="stack">
-          <section class="panel">
-            <h2>Demonstration run</h2>
-            <p class="muted">Each run is one synthetic apartment, starting at the forecast day.</p>
-            <label class="field">Scenario
-              <select id="scenario">
-                <option value="branch">Separate pump and charger meters</option>
-                <option value="aggregate">One combined meter only</option>
-                <option value="dry">Water source fails: pump draws power, tank does not fill</option>
-              </select>
-            </label>
-            <div class="buttons"><button id="create-run" type="button">Start new run</button></div>
-            <label class="field" style="margin-top:.75rem">Open an earlier run
-              <select id="run-picker"></select>
-            </label>
-            <div id="run-link"></div>
-          </section>
           <section class="panel" id="sim" hidden>
             <h2 id="sim-title">Simulation control</h2>
             <div id="due"></div>

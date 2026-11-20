@@ -5,20 +5,24 @@ METRIC_DEFINITIONS = {
     "allowance_exceedance_model_kwh": "sum(max(0, P - allowance) * dt_h); outage intervals get no reduction credit",
     "peak_window_energy_model_kwh": "participating energy inside advisory peak intervals",
     "reserve_violation_intervals": "intervals ending with tank below reserve",
+    "critical_level_violation_intervals": "intervals ending with tank below the critical level (demonstration assumption)",
     "unmet_withdrawal_l": "water demanded but not available (physically empty tank)",
     "ev_shortfall_at_departure_model_kwh": "requested - delivered by departure, per EV; null if departure not reached",
     "pump_starts": "OFF->ON transitions of the actual pump",
+    "restart_lockouts": "intervals where a start was commanded inside the minimum off time and not honoured",
+    "safety_stops": "intervals where a safety stop forced the pump off (tank full, or no source water with protection)",
+    "short_pump_runs": "manual stops before the minimum on time (counted, not prevented)",
 }
 
 
-def run_metrics(p, truth, peak_intervals):
+def run_metrics(p, truth, peak_intervals, initial_pump_on=False):
     dt_h = p["model_dt_minutes"] / 60
     n = len(truth)
     delivered = {s["ev_id"]: 0.0 for s in p["ev_sessions"]}
     by_dep = {}
     peak_kw = exceed = peak_e = total_e = 0.0
     viol = starts = 0
-    prev_pump = False
+    prev_pump = bool(initial_pump_on)  # a pump already running when the period starts is not a new start
     for rec in truth:
         i, kw = rec["interval_index"], rec["aggregate_model_kw"]
         peak_kw = max(peak_kw, kw)
@@ -49,11 +53,15 @@ def run_metrics(p, truth, peak_intervals):
         "peak_window_energy_model_kwh": round(peak_e, 4),
         "total_participating_energy_model_kwh": round(total_e, 4),
         "reserve_violation_intervals": viol,
+        "critical_level_violation_intervals": sum(r["tank_l"] < p.get("tank_critical_l", 0) - 1e-9 for r in truth),
         "unmet_withdrawal_l": round(truth[-1]["unmet_water_l"], 2) if truth and truth[-1].get("unmet_water_l") is not None
         else (0.0 if not truth else None),
         "final_tank_l": truth[-1]["tank_l"] if truth else p["tank_init_l"],
         "ev_shortfall_at_departure_model_kwh": ev_short,
         "ev_delivered_model_kwh": {k: round(v, 4) for k, v in delivered.items()},
         "pump_starts": starts,
+        "restart_lockouts": sum(bool(r.get("pump_restart_lockout")) for r in truth),
+        "safety_stops": sum(bool(r.get("pump_safety_stop")) for r in truth),
+        "short_pump_runs": sum(bool(r.get("pump_short_run_stop")) for r in truth),
         "definitions": METRIC_DEFINITIONS,
     }

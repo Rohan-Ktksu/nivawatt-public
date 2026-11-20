@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NivaWatt 3D demo view</title>
+  <link rel="stylesheet" href="/web/style.css">
+</head>
+<body>
+  <div class="sim-banner"><p>Demonstration. Apartment values are a synthetic simulation unless a reading says otherwise.</p></div>
+  <header class="masthead">
+    <h1>3D demo view</h1>
+    <p class="meta" id="meta"></p>
+  </header>
+  <main>
+    <div id="toast" role="status" aria-live="polite"></div>
+
+    <section class="panel" id="signin" hidden>
+      <h2>Sign in</h2>
+      <p class="muted">Use the manager access code. This view only reads the run; it changes nothing.</p>
+      <form id="signin-form">
+        <label class="field">Run ID <input type="text" id="run-id" required autocomplete="off"></label>
+        <label class="field">Apartment ID <input type="text" id="apartment-id" value="APT_1" required autocomplete="off"></label>
+        <label class="field">Access code <input type="password" id="access-code" required autocomplete="off"></label>
+        <button class="primary" type="submit">Sign in</button>
+      </form>
+    </section>
+
+    <p class="panel" id="loading" hidden>Loading the latest state.</p>
+
+    <div class="stack" id="app" hidden>
+      <section class="panel" id="scene" aria-labelledby="scene-title">
+        <h2 id="scene-title">What the meters saw</h2>
+        <div class="scene3d" aria-hidden="true">
+          <div class="floor">
+            <div class="obj obj-tank" id="obj-tank" data-obj="tank"><div class="box"><div class="water"></div><span class="q">?</span></div><b>Tank</b></div>
+            <div class="obj obj-pump" id="obj-pump" data-obj="pump"><div class="box"><div class="fan"></div><span class="q">?</span></div><b>Pump</b></div>
+            <div class="obj obj-charger" id="obj-charger" data-obj="charger"><div class="box"><div class="bolt"></div><span class="q">?</span></div><b>EV chargers</b></div>
+          </div>
+        </div>
+        <dl class="facts" id="scene-facts" data-facts></dl>
+        <p class="muted">Built from meter and tank readings only. Accepting or revising a plan switches nothing, so it never changes this scene. Unknown means no usable reading, not off.</p>
+      </section>
+
+      <div class="columns three">
+        <section class="panel" id="requested"></section>
+        <section class="panel" id="reported"></section>
+        <section class="panel" id="observed"></section>
+      </div>
+
+      <section class="panel" id="revision"></section>
+      <section class="panel" id="timeline"></section>
+      <p><button type="button" id="sign-out">Sign out</button></p>
+    </div>
+  </main>
+  <script src="/web/ui.js"></script>
+  <script src="/web/api.js"></script>
+  <script src="/web/building.js"></script>
+  <script src="/web/scene.js"></script>
+</body>
+</html>

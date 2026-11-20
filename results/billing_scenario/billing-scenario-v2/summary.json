@@ -1,0 +1,503 @@
+{
+ "protocol": {
+  "id": "billing-scenario-v2",
+  "kind": "illustrative synthetic simulation (not apartment-specific, not a bill)",
+  "days": 30,
+  "chained_days": true,
+  "carry_equipment_state": true,
+  "policies": {
+   "baseline": "uncoordinated",
+   "coordinated": "measured_replan"
+  },
+  "apartment": "simulation/plant.py DEFAULT_PARAMS (10,000 L tank, 3,000 L reserve, 1,000 L critical, 2.2 kW pump moving 6,000 L/h, 3.3 kW charger, 6 kW participating-load allowance, min on/off 4/2 intervals)",
+  "initial_tank_l": 4500,
+  "profile": "simulation/plant.py default_withdrawals (synthetic; identical every day: no weekday/weekend/holiday differentiation exists in the profile, so none is modelled; each day weighted equally)",
+  "advisory_peak_intervals": [
+   40,
+   41,
+   42,
+   43,
+   44,
+   45,
+   46,
+   47,
+   48,
+   49,
+   50,
+   51
+  ],
+  "advisory_note": "10:00-13:00 IST every day; advisory hours carry no bill value under LT-1 (no time-of-day tariff)",
+  "ev": "one EV per day, arriving 00:00, leaving 08:00 (intervals 0-32), requested energy per scenario",
+  "scenarios": {
+   "low": {
+    "withdrawal_scale": 0.85,
+    "withdrawal_noise": 0.1,
+    "ev_kwh": 7,
+    "p_miss_ev": 0.0
+   },
+   "base": {
+    "withdrawal_scale": 1.0,
+    "withdrawal_noise": 0.15,
+    "ev_kwh": 10,
+    "p_miss_ev": 0.0
+   },
+   "high": {
+    "withdrawal_scale": 1.15,
+    "withdrawal_noise": 0.3,
+    "ev_kwh": 13,
+    "p_miss_ev": 0.0
+   },
+   "base_missed_ev": {
+    "withdrawal_scale": 1.0,
+    "withdrawal_noise": 0.15,
+    "ev_kwh": 10,
+    "p_miss_ev": 0.15
+   }
+  },
+  "execution": "perfect human execution except base_missed_ev (15% of instructed EV actions skipped, reported done)",
+  "seed": "day d of scenario s uses seed 7000 + 100*s + d (s in declaration order)",
+  "tariff": {
+   "category": "LT-1",
+   "period_start": "2026-06-01",
+   "period_end": "2026-07-01",
+   "scope": "participating_loads",
+   "fppca": "unknown (no verified monthly value)",
+   "tax": "9% of the energy charge (unverified assumption)"
+  },
+  "comparability": {
+   "unmet_withdrawal_l_tolerance": 1.0,
+   "reserve_violation_intervals": "must be equal",
+   "ev_energy_per_session_tolerance_kwh": 0.05,
+   "storage": "final tank difference converted to pump energy at 2.2 kW per 6,000 L/h and reported as a storage-adjusted energy difference; raw difference also shown"
+  }
+ },
+ "software_commit": "0d16373",
+ "scenarios": [
+  {
+   "scenario": "low",
+   "config": {
+    "withdrawal_scale": 0.85,
+    "withdrawal_noise": 0.1,
+    "ev_kwh": 7,
+    "p_miss_ev": 0.0
+   },
+   "baseline": {
+    "policy": "uncoordinated",
+    "kwh": 333.75,
+    "peak_window_kwh": 4.95,
+    "unmet_withdrawal_l": 0.0,
+    "reserve_violation_intervals": 0,
+    "ev_shortfall_kwh": 0,
+    "pump_starts": 45,
+    "overflow_l": 20850.3,
+    "pump_on_at_midnight_days": 2,
+    "initial_tank_l": 4500,
+    "final_tank_l": 6612.0
+   },
+   "coordinated": {
+    "policy": "measured_replan",
+    "kwh": 326.6,
+    "peak_window_kwh": 0.0,
+    "unmet_withdrawal_l": 0.0,
+    "reserve_violation_intervals": 0,
+    "ev_shortfall_kwh": 0,
+    "pump_starts": 53,
+    "overflow_l": 0.0,
+    "pump_on_at_midnight_days": 0,
+    "initial_tank_l": 4500,
+    "final_tank_l": 7962.3
+   },
+   "comparison": {
+    "comparability": "comparable (equal water and EV service; storage difference credited)",
+    "comparable": true,
+    "energy_kwh_raw_difference": -7.15,
+    "storage_difference_l": 1350.3,
+    "storage_equivalent_kwh": 0.495,
+    "energy_kwh_storage_adjusted_difference": -7.645,
+    "costs": {
+     "baseline": {
+      "status": "partial",
+      "known_components_rs": 2226.78,
+      "components": {
+       "energy": 1935.75,
+       "fppca": null,
+       "pg_surcharge": 116.81,
+       "tax": 174.22
+      },
+      "unavailable": [
+       "Fuel cost adjustment (FPPCA) rate for the month: it varies monthly and no verified value is held"
+      ]
+     },
+     "coordinated": {
+      "status": "partial",
+      "known_components_rs": 2179.08,
+      "components": {
+       "energy": 1894.28,
+       "fppca": null,
+       "pg_surcharge": 114.31,
+       "tax": 170.49
+      },
+      "unavailable": [
+       "Fuel cost adjustment (FPPCA) rate for the month: it varies monthly and no verified value is held"
+      ]
+     },
+     "coordinated_storage_adjusted": {
+      "status": "partial",
+      "known_components_rs": 2175.78,
+      "components": {
+       "energy": 1891.41,
+       "fppca": null,
+       "pg_surcharge": 114.14,
+       "tax": 170.23
+      },
+      "unavailable": [
+       "Fuel cost adjustment (FPPCA) rate for the month: it varies monthly and no verified value is held"
+      ]
+     }
+    },
+    "cost_difference_rs_known_components": -51.0,
+    "cost_difference_pct": -2.29,
+    "time_shifting_effect_rs": 0.0,
+    "time_shifting_note": "LT-1 has one flat energy rate (no time-of-day tariff): moving the same kWh between hours changes the energy charge by exactly zero.",
+    "energy_use_effect_rs": -51.0,
+    "fppca_effect": "unknown: storage-adjusted kWh difference x the month's FPPCA rate (no verified value)",
+    "demand_charge_effect": "not estimable: needs the whole connection's recorded maximum demand; participating-load meters cannot supply it and the participating-load allowance is not sanctioned load or contract demand",
+    "peak_window_kwh_difference": -4.95,
+    "overflow_l": {
+     "baseline": 20850.3,
+     "coordinated": 0.0
+    },
+    "overflow_energy_kwh_difference": -7.645,
+    "energy_kwh_difference_excluding_overflow": 0.0,
+    "cost_difference_rs_excluding_overflow": 0.0,
+    "verdict": "zero within rounding: the whole difference is baseline overflow, a 15-minute modelling artefact"
+   }
+  },
+  {
+   "scenario": "base",
+   "config": {
+    "withdrawal_scale": 1.0,
+    "withdrawal_noise": 0.15,
+    "ev_kwh": 10,
+    "p_miss_ev": 0.0
+   },
+   "baseline": {
+    "policy": "uncoordinated",
+    "kwh": 443.55,
+    "peak_window_kwh": 15.4,
+    "unmet_withdrawal_l": 0.0,
+    "reserve_violation_intervals": 0,
+    "ev_shortfall_kwh": 0,
+    "pump_starts": 52,
+    "overflow_l": 19570.4,
+    "pump_on_at_midnight_days": 2,
+    "initial_tank_l": 4500,
+    "final_tank_l": 7236.7
+   },
+   "coordinated": {
+    "policy": "measured_replan",
+    "kwh": 436.4,
+    "peak_window_kwh": 1.65,
+    "unmet_withdrawal_l": 0.0,
+    "reserve_violation_intervals": 0,
+    "ev_shortfall_kwh": 0,
+    "pump_starts": 62,
+    "overflow_l": 0.0,
+    "pump_on_at_midnight_days": 0,
+    "initial_tank_l": 4500,
+    "final_tank_l": 7307.1
+   },
+   "comparison": {
+    "comparability": "comparable (equal water and EV service; storage difference credited)",
+    "comparable": true,
+    "energy_kwh_raw_difference": -7.15,
+    "storage_difference_l": 70.4,
+    "storage_equivalent_kwh": 0.026,
+    "energy_kwh_storage_adjusted_difference": -7.176,
+    "costs": {
+     "baseline": {
+      "status": "partial",
+      "known_components_rs": 2959.36,
+      "components": {
+       "energy": 2572.59,
+       "fppca": null,
+       "pg_surcharge": 155.24,
+       "tax": 231.53
+      },
+      "unavailable": [
+       "Fuel cost adjustment (FPPCA) rate for the month: it varies monthly and no verified value is held"
+      ]
+     },
+     "coordinated": {
+      "status": "partial",
+      "known_components_rs": 2911.66,
+      "components": {
+       "energy": 2531.12,
+       "fppca": null,
+       "pg_surcharge": 152.74,
+       "tax": 227.8
+      },
+      "unavailable": [
+       "Fuel cost adjustment (FPPCA) rate for the month: it varies monthly and no verified value is held"
+      ]
+     },
+     "coordinated_storage_adjusted": {
+      "status": "partial",
+      "known_components_rs": 2911.49,
+      "components": {
+       "energy": 2530.97,
+       "fppca": null,
+       "pg_surcharge": 152.73,
+       "tax": 227.79
+      },
+      "unavailable": [
+       "Fuel cost adjustment (FPPCA) rate for the month: it varies monthly and no verified value is held"
+      ]
+     }
+    },
+    "cost_difference_rs_known_components": -47.87,
+    "cost_difference_pct": -1.62,
+    "time_shifting_effect_rs": 0.0,
+    "time_shifting_note": "LT-1 has one flat energy rate (no time-of-day tariff): moving the same kWh between hours changes the energy charge by exactly zero.",
+    "energy_use_effect_rs": -47.87,
+    "fppca_effect": "unknown: storage-adjusted kWh difference x the month's FPPCA rate (no verified value)",
+    "demand_charge_effect": "not estimable: needs the whole connection's recorded maximum demand; participating-load meters cannot supply it and the participating-load allowance is not sanctioned load or contract demand",
+    "peak_window_kwh_difference": -13.75,
+    "overflow_l": {
+     "baseline": 19570.4,
+     "coordinated": 0.0
+    },
+    "overflow_energy_kwh_difference": -7.176,
+    "energy_kwh_difference_excluding_overflow": 0.0,
+    "cost_difference_rs_excluding_overflow": 0.0,
+    "verdict": "zero within rounding: the whole difference is baseline overflow, a 15-minute modelling artefact"
+   }
+  },
+  {
+   "scenario": "high",
+   "config": {
+    "withdrawal_scale": 1.15,
+    "withdrawal_noise": 0.3,
+    "ev_kwh": 13,
+    "p_miss_ev": 0.0
+   },
+   "baseline": {
+    "policy": "uncoordinated",
+    "kwh": 557.75,
+    "peak_window_kwh": 53.9,
+    "unmet_withdrawal_l": 0.0,
+    "reserve_violation_intervals": 0,
+    "ev_shortfall_kwh": 0,
+    "pump_starts": 61,
+    "overflow_l": 26302.9,
+    "pump_on_at_midnight_days": 6,
+    "initial_tank_l": 4500,
+    "final_tank_l": 9576.8
+   },
+   "coordinated": {
+    "policy": "measured_replan",
+    "kwh": 547.85,
+    "peak_window_kwh": 1.65,
+    "unmet_withdrawal_l": 0.0,
+    "reserve_violation_intervals": 0,
+    "ev_shortfall_kwh": 0,
+    "pump_starts": 72,
+    "overflow_l": 40.1,
+    "pump_on_at_midnight_days": 2,
+    "initial_tank_l": 4500,
+    "final_tank_l": 8839.6
+   },
+   "comparison": {
+    "comparability": "comparable (equal water and EV service; storage difference credited)",
+    "comparable": true,
+    "energy_kwh_raw_difference": -9.9,
+    "storage_difference_l": -737.2,
+    "storage_equivalent_kwh": -0.27,
+    "energy_kwh_storage_adjusted_difference": -9.63,
+    "costs": {
+     "baseline": {
+      "status": "partial",
+      "known_components_rs": 3721.31,
+      "components": {
+       "energy": 3234.95,
+       "fppca": null,
+       "pg_surcharge": 195.21,
+       "tax": 291.15
+      },
+      "unavailable": [
+       "Fuel cost adjustment (FPPCA) rate for the month: it varies monthly and no verified value is held"
+      ]
+     },
+     "coordinated": {
+      "status": "partial",
+      "known_components_rs": 3655.26,
+      "components": {
+       "energy": 3177.53,
+       "fppca": null,
+       "pg_surcharge": 191.75,
+       "tax": 285.98
+      },
+      "unavailable": [
+       "Fuel cost adjustment (FPPCA) rate for the month: it varies monthly and no verified value is held"
+      ]
+     },
+     "coordinated_storage_adjusted": {
+      "status": "partial",
+      "known_components_rs": 3657.06,
+      "components": {
+       "energy": 3179.1,
+       "fppca": null,
+       "pg_surcharge": 191.84,
+       "tax": 286.12
+      },
+      "unavailable": [
+       "Fuel cost adjustment (FPPCA) rate for the month: it varies monthly and no verified value is held"
+      ]
+     }
+    },
+    "cost_difference_rs_known_components": -64.25,
+    "cost_difference_pct": -1.73,
+    "time_shifting_effect_rs": 0.0,
+    "time_shifting_note": "LT-1 has one flat energy rate (no time-of-day tariff): moving the same kWh between hours changes the energy charge by exactly zero.",
+    "energy_use_effect_rs": -64.25,
+    "fppca_effect": "unknown: storage-adjusted kWh difference x the month's FPPCA rate (no verified value)",
+    "demand_charge_effect": "not estimable: needs the whole connection's recorded maximum demand; participating-load meters cannot supply it and the participating-load allowance is not sanctioned load or contract demand",
+    "peak_window_kwh_difference": -52.25,
+    "overflow_l": {
+     "baseline": 26302.9,
+     "coordinated": 40.1
+    },
+    "overflow_energy_kwh_difference": -9.63,
+    "energy_kwh_difference_excluding_overflow": 0.0,
+    "cost_difference_rs_excluding_overflow": 0.0,
+    "verdict": "zero within rounding: the whole difference is baseline overflow, a 15-minute modelling artefact"
+   }
+  },
+  {
+   "scenario": "base_missed_ev",
+   "config": {
+    "withdrawal_scale": 1.0,
+    "withdrawal_noise": 0.15,
+    "ev_kwh": 10,
+    "p_miss_ev": 0.15
+   },
+   "baseline": {
+    "policy": "uncoordinated",
+    "kwh": 444.1,
+    "peak_window_kwh": 18.7,
+    "unmet_withdrawal_l": 0.0,
+    "reserve_violation_intervals": 0,
+    "ev_shortfall_kwh": 0,
+    "pump_starts": 52,
+    "overflow_l": 22421.7,
+    "pump_on_at_midnight_days": 4,
+    "initial_tank_l": 4500,
+    "final_tank_l": 4568.4
+   },
+   "coordinated": {
+    "policy": "measured_replan",
+    "kwh": 436.4,
+    "peak_window_kwh": 1.65,
+    "unmet_withdrawal_l": 0.0,
+    "reserve_violation_intervals": 0,
+    "ev_shortfall_kwh": 0,
+    "pump_starts": 62,
+    "overflow_l": 0.0,
+    "pump_on_at_midnight_days": 1,
+    "initial_tank_l": 4500,
+    "final_tank_l": 5990.1
+   },
+   "comparison": {
+    "comparability": "comparable (equal water and EV service; storage difference credited)",
+    "comparable": true,
+    "energy_kwh_raw_difference": -7.7,
+    "storage_difference_l": 1421.7,
+    "storage_equivalent_kwh": 0.521,
+    "energy_kwh_storage_adjusted_difference": -8.221,
+    "costs": {
+     "baseline": {
+      "status": "partial",
+      "known_components_rs": 2963.04,
+      "components": {
+       "energy": 2575.78,
+       "fppca": null,
+       "pg_surcharge": 155.44,
+       "tax": 231.82
+      },
+      "unavailable": [
+       "Fuel cost adjustment (FPPCA) rate for the month: it varies monthly and no verified value is held"
+      ]
+     },
+     "coordinated": {
+      "status": "partial",
+      "known_components_rs": 2911.66,
+      "components": {
+       "energy": 2531.12,
+       "fppca": null,
+       "pg_surcharge": 152.74,
+       "tax": 227.8
+      },
+      "unavailable": [
+       "Fuel cost adjustment (FPPCA) rate for the month: it varies monthly and no verified value is held"
+      ]
+     },
+     "coordinated_storage_adjusted": {
+      "status": "partial",
+      "known_components_rs": 2908.19,
+      "components": {
+       "energy": 2528.1,
+       "fppca": null,
+       "pg_surcharge": 152.56,
+       "tax": 227.53
+      },
+      "unavailable": [
+       "Fuel cost adjustment (FPPCA) rate for the month: it varies monthly and no verified value is held"
+      ]
+     }
+    },
+    "cost_difference_rs_known_components": -54.85,
+    "cost_difference_pct": -1.85,
+    "time_shifting_effect_rs": 0.0,
+    "time_shifting_note": "LT-1 has one flat energy rate (no time-of-day tariff): moving the same kWh between hours changes the energy charge by exactly zero.",
+    "energy_use_effect_rs": -54.85,
+    "fppca_effect": "unknown: storage-adjusted kWh difference x the month's FPPCA rate (no verified value)",
+    "demand_charge_effect": "not estimable: needs the whole connection's recorded maximum demand; participating-load meters cannot supply it and the participating-load allowance is not sanctioned load or contract demand",
+    "peak_window_kwh_difference": -17.05,
+    "overflow_l": {
+     "baseline": 22421.7,
+     "coordinated": 0.0
+    },
+    "overflow_energy_kwh_difference": -8.221,
+    "energy_kwh_difference_excluding_overflow": 0.0,
+    "cost_difference_rs_excluding_overflow": 0.0,
+    "verdict": "zero within rounding: the whole difference is baseline overflow, a 15-minute modelling artefact"
+   }
+  }
+ ],
+ "headline": {
+  "what": "coordinated minus baseline, known circuit energy charges, equal service only, EXCLUDING the baseline's coarse-step overflow artefact; negative = saving",
+  "comparable_scenarios": 4,
+  "of": 4,
+  "cost_difference_rs": {
+   "min": 0.0,
+   "max": 0.0
+  },
+  "verdicts": {
+   "low": "zero within rounding: the whole difference is baseline overflow, a 15-minute modelling artefact",
+   "base": "zero within rounding: the whole difference is baseline overflow, a 15-minute modelling artefact",
+   "high": "zero within rounding: the whole difference is baseline overflow, a 15-minute modelling artefact",
+   "base_missed_ev": "zero within rounding: the whole difference is baseline overflow, a 15-minute modelling artefact"
+  },
+  "not_included": [
+   "FPPCA (no verified monthly rate)",
+   "fixed/demand charges (whole connection)",
+   "demand-charge effect (needs whole-connection maximum demand)"
+  ]
+ },
+ "including_overflow_artefact_rs": {
+  "min": -64.25,
+  "max": -47.87,
+  "note": "NOT a saving: includes water the baseline pumped past a full tank at 15-minute steps"
+ },
+ "range_note": "min/base/max are scenario assumptions, not statistical confidence intervals"
+}

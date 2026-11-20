@@ -8,8 +8,8 @@
            "flow_basis": "estimate (10,000 L in under 2 h); replace with a manufacturer head-discharge chart or a measured fill"},
   "ev_charger": {"rated_kw": 3.3, "supply_v": 230, "alternative_rated_kw": 7.4},
   "sensor_noise": {"tank_l_sd": 15, "power_fraction_sd": 0.02},
-  "emulator": {"sample_period_s": 1.0, "seconds_per_model_interval": 15,
-               "time_note": "Emulator physics runs model time = real time x (900 / seconds_per_model_interval). Reported watts are true-scale; reported tank litres are model-scale."},
+  "emulator": {"samples_per_model_interval": 15, "seconds_per_model_interval": 15,
+               "time_note": "samples_per_model_interval is the meter cadence in simulated time (15 = one reading per simulated minute). seconds_per_model_interval is execution speed only: the wall seconds over which one 900 s model interval is produced (15 = 60x, 900 = real time). Physics and the meter counters run on simulated time (energy = power x simulated time, with simulated timestamps), so speed never changes a reading or the energy. Reported watts are true-scale; reported tank litres are model-scale."},
   "sources": [
     {"claim": "20-flat, 5-floor building, 85 ft lift, 10,000 L tank; 1 HP too slow, 3 HP three-phase advised",
      "url": "https://www.indiawaterportal.org/questions/need-help-pump-selection-pump-water-65-feet-high-overhead-tank-bangalore-karnataka-need"},

@@ -31,8 +31,21 @@
     <div class="stack" id="app" hidden>
       <section class="panel next" id="next" aria-label="Recommended next action"></section>
       <div class="columns">
-        <section class="panel" id="commitment"></section>
+        <section class="panel" id="building" aria-labelledby="building-title">
+          <h2 id="building-title">Your building</h2>
+          <div id="building-scene"></div>
+          <p class="muted">Drawn from meter and tank readings only. Accepting a plan or reporting an action changes nothing here until a reading arrives. Unknown means no usable reading, not off.</p>
+        </section>
         <section class="panel" id="proposal"></section>
+      </div>
+      <div class="columns three">
+        <section class="panel" id="asked"></section>
+        <section class="panel" id="said"></section>
+        <section class="panel" id="seen"></section>
+      </div>
+      <div class="columns">
+        <section class="panel" id="commitment"></section>
+        <section class="panel" id="decision"></section>
       </div>
       <section class="panel" id="execution"></section>
       <div class="columns">
@@ -48,6 +61,7 @@
   </main>
   <script src="/web/ui.js"></script>
   <script src="/web/api.js"></script>
+  <script src="/web/building.js"></script>
   <script src="/web/manager.js"></script>
 </body>
 </html>

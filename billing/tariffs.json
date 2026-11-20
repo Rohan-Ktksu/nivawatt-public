@@ -1,0 +1,106 @@
+{
+  "_note": "Public KERC tariff rules used by billing/calculator.py. Only rules checked against primary documents are marked verified; see handoff/BILL_ANALYSIS_SPEC.md section 8 (PR #23, commit 914264e). Unverified items are flagged and never presented as verified. No bills or account data.",
+  "utility": "BESCOM",
+  "source_documents": {
+    "D1": {"title": "KERC Combined Tariff Order 2025 (ESCOMs), FY2025-26 to FY2027-28", "date": "2025-03-27", "url": "https://kerc.karnataka.gov.in/uploads/96731743148968.pdf"},
+    "D2": {"title": "KERC tariff charges approved for the control period (summary table)", "date": "2025-03-27", "url": "https://kerc.karnataka.gov.in/uploads/85821743074692.pdf"},
+    "D3": {"title": "Corrigendum to the Combined Tariff Order 2025", "date": "2025-05-26", "url": "https://kerc.karnataka.gov.in/uploads/media_to_upload1748322531.pdf"},
+    "D4": {"title": "KERC order in Review Petition 8/2025 (revises LT-4a, LT-3a, LT-5, HT-2a, HT-2b for FY2025-26 only)", "date": "2026-03-03", "url": "https://kerc.karnataka.gov.in/uploads/18281772541323.pdf"},
+    "D5": {"title": "KERC order: Government portion of Pension and Gratuity surcharge", "date": "2025-03-18", "url": "https://kerc.karnataka.gov.in/uploads/media_to_upload1742361922.pdf"},
+    "D6": {"title": "Amendment to the P&G surcharge order (excludes DERS consumption)", "date": "2025-03-27", "url": "https://kerc.karnataka.gov.in/uploads/98041743075668.pdf"},
+    "D7": {"title": "KERC order on BESCOM Annual Performance Review FY2024-25 (FY25 true-up)", "date": "2026-04-17", "url": "https://kerc.karnataka.gov.in/uploads/17731776422105.pdf"}
+  },
+  "categories": {
+    "LT-1": {
+      "label": "LT-1 Domestic",
+      "kind": "fixed_per_kw",
+      "source": "D1 Annexure 9, printed p.534 / PDF p.550; D2 p.1; unchanged by D3 and D4",
+      "applicability": "Decided by the connection's tariff code on its bill. Clause (n) covers water supply installations and lifts independently serviced for bona fide use of residential complexes. Never inferred from the equipment.",
+      "billing_load_rule": "D1 Annexure 9 para 17 (printed p.525 / PDF p.541): with a static, tri-vector or smart meter, the higher of sanctioned load and recorded maximum demand; without one, the higher of rated and sanctioned load.",
+      "time_of_day": "No time-of-day schedule for LT-1 under D1 (Annexure 9 para 26, printed p.527 / PDF p.543).",
+      "periods": [
+        {"valid_from": "2025-04-01", "valid_to": "2026-03-31", "fixed_rs_per_kw_month": 145, "energy_paise_per_kwh": 580},
+        {"valid_from": "2026-04-01", "valid_to": "2027-03-31", "fixed_rs_per_kw_month": 150, "energy_paise_per_kwh": 580},
+        {"valid_from": "2027-04-01", "valid_to": "2028-03-31", "fixed_rs_per_kw_month": 160, "energy_paise_per_kwh": 575}
+      ]
+    },
+    "HT-4": {
+      "label": "HT-4 Residential apartments and colonies",
+      "kind": "demand_per_kva",
+      "source": "D1 Annexure 9, printed p.552 / PDF p.568; D2 p.1",
+      "applicability": "HT supply to residential apartments/colonies. Common areas (water pumping, lift, motor, parking lighting and similar) are billed at the tariff of the predominant consumer category (D1 printed p.552-553).",
+      "billing_demand_rule": "Recorded maximum demand or 90% of contract demand, whichever is higher; demand above contract demand is charged at two times the rate (D1 PDF p.561).",
+      "time_of_day": "No time-of-day schedule for HT-4 under D1 (Annexure 9 para 26).",
+      "periods": [
+        {"valid_from": "2025-04-01", "valid_to": "2026-03-31", "demand_rs_per_kva_month": 290, "energy_paise_per_kwh": 690},
+        {"valid_from": "2026-04-01", "valid_to": "2027-03-31", "demand_rs_per_kva_month": 290, "energy_paise_per_kwh": 700},
+        {"valid_from": "2027-04-01", "valid_to": "2028-03-31", "demand_rs_per_kva_month": 290, "energy_paise_per_kwh": 715}
+      ]
+    },
+    "LT-6(c)": {
+      "label": "LT-6(c) Electric vehicle charging station (LT)",
+      "kind": "fixed_per_kw",
+      "source": "D1 Annexure 9, printed p.542 / PDF p.558",
+      "applicability": "A separate EV charging station connection. Not an EV charger on a domestic or common-area meter.",
+      "billing_load_rule": "As for LT installations (D1 Annexure 9 para 17).",
+      "time_of_day": "Time-of-day applies only to bus-depot charging stations on HT (D1 PDF p.558); not to LT-6(c).",
+      "periods": [
+        {"valid_from": "2025-04-01", "valid_to": "2028-03-31", "fixed_rs_per_kw_month": 70, "energy_paise_per_kwh": 450}
+      ]
+    }
+  },
+  "unsupported_categories": {
+    "LT-6(a)": "Water supply (per HP). Its applicability to an apartment pump is unresolved, so it is not calculated."
+  },
+  "pg_surcharge": {
+    "label": "P&G surcharge (Government portion)",
+    "status": "verified",
+    "source": "D5 p.8 and order p.10; D6 (consumption under DERS excluded)",
+    "periods": [
+      {"valid_from": "2025-04-01", "valid_to": "2026-03-31", "paise_per_kwh": 36},
+      {"valid_from": "2026-04-01", "valid_to": "2027-03-31", "paise_per_kwh": 35},
+      {"valid_from": "2027-04-01", "valid_to": "2028-03-31", "paise_per_kwh": 34}
+    ]
+  },
+  "fy25_true_up": {
+    "label": "FY25 true-up charge (historical; not caused by scheduling)",
+    "status": "verified",
+    "source": "D7 Table-28 and order, printed p.46-47",
+    "paise_per_kwh_of_fy2024_25_consumption": 56,
+    "instalments": 12,
+    "recovery_from": "2026-05-01",
+    "recovery_to": "2027-04-30",
+    "basis": "Each consumer's own FY2024-25 consumption, excluding DERS consumption, recovered in equal monthly instalments from the first reading on or after 1 May 2026 to the reading ending 30 April 2027."
+  },
+  "electricity_tax": {
+    "label": "Electricity tax",
+    "status": "unverified_assumption",
+    "rate": 0.09,
+    "base": "energy_charge",
+    "note": "Rate seen only through a secondary copy of the Karnataka Electricity (Taxation on Consumption) Act, 1959, as amended; the base (energy charge only) was observed on one bill. Treated as an assumption."
+  },
+  "fppca": {
+    "label": "Fuel and power purchase cost adjustment (FPPCA)",
+    "status": "per_bill_input",
+    "note": "Varies monthly. No verified value for the billing months is held; it must be supplied from the bill, otherwise the bill is partial."
+  },
+  "fixed_charge_proration": {
+    "label": "Fixed charge for the billing period",
+    "status": "observed_on_one_bill",
+    "rule": "monthly rate x billing load x (days in period / 30)",
+    "note": "Matches one supplied bill; no KERC or BESCOM rule text found."
+  },
+  "rounding": {
+    "label": "Bill rounding",
+    "status": "observed_on_one_bill",
+    "rule": "total rounded to the nearest rupee"
+  },
+  "demand_rules": {
+    "ht_supply_threshold": {"status": "verified", "rule": "HT tariffs apply when the contract demand is 50 kW / 67 HP and above", "source": "D1 Annexure 9, Part II heading (PDF p.560)"},
+    "ht_billing_demand_rounding": {"status": "verified", "rule": "billing demand fraction of 0.5 kVA or more rounded up to the next kVA; less than 0.5 kVA ignored", "source": "D1 Annexure 9, HT billing conditions 1(D), printed p.545 / PDF p.561"},
+    "ht_power_factor": {"status": "verified", "rule": "specified PF 0.90 lag; surcharge 3 paise per kWh for every 0.01 below 0.90; PF = recorded average or kWh/kVAh", "source": "D1 Annexure 9, HT billing conditions 2, printed p.545 / PDF p.561"},
+    "lt_rounding": {"status": "verified", "rule": "LT billing kW rounded to the nearest quarter kW, minimum 1 kW", "source": "D1 para 6.15.7, printed p.255-256"},
+    "lt_excess_penalty": {"status": "verified", "rule": "2x penal charge on MD above sanctioned load is stated for LT industrial/commercial consumers on the optional demand-based tariff; no such penalty is stated for LT-1, whose billing load is the higher of sanctioned load and recorded MD", "source": "D1 Annexure 9, LT billing conditions 1, printed p.530 / PDF p.546; para 17"},
+    "md_integration_period": {"status": "verified", "rule": "maximum demand = average kW or kVA delivered at the point of supply, recorded during a thirty-minute period of maximum use in the month; the licensee may shorten the period for special classes of consumers with the Commission's approval", "source": "Conditions of Supply of Electricity of Distribution Licensees in the State of Karnataka, clause 2.38 (Karnataka Gazette 17.6.2006; amendments K.E.R.C./COS/D/07/08 of 14.3.2008 and K.E.R.C./COS/D/07/10 of 1.7.2010), as published by BESCOM: https://www.bescom.co.in/bescom/assets/pdfs/ConditionsofSupplyofElectricitywithIandIIAmendments.pdf, PDF p.9", "note": "Amendments after 2010 and the KERC Distribution Code Regulations 2025 were not checked; a shortened period for a special class would change results (15-minute sensitivity reported)."}
+  }
+}

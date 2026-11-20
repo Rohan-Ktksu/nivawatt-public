@@ -95,6 +95,12 @@ button.claim { background: var(--warn-bg); border: 2px dashed var(--warn); color
 .next .big { margin: .25rem 0 .5rem; }
 .next .label { color: #c8d8d9; font-size: .9375rem; }
 .next p { margin-bottom: .25rem; }
+.next a { color: #cff1fa; }
+.demo-progress { padding: .85rem 1rem; border-left: 4px solid var(--water-deep); background: #edf5f6; margin: .75rem 0; }
+.demo-progress p { margin: .4rem 0; }
+.demo-links { display: flex; flex-wrap: wrap; gap: .5rem 1rem; padding: .3rem 0; }
+.demo-links a { display: inline-flex; align-items: center; min-height: 2.75rem; font-weight: 600; }
+.demo-browser { margin-top: 1rem; border-top: 1px solid var(--line); padding-top: .75rem; }
 
 /* The report and the reading are two independent records, so they sit side by side, not in one status. */
 .ledger { display: grid; grid-template-columns: 1fr 1fr; border: 2px solid var(--ink); border-radius: 4px; margin-bottom: .75rem; }
@@ -150,3 +156,69 @@ details > summary { cursor: pointer; font-weight: 600; min-height: 2.75rem; disp
   .bar i, .tank .water { background: CanvasText; }
   .bar.peak i { background: Highlight; }
 }
+
+/* Meter card: one row per channel */
+.meter-card { margin-top: .75rem; }
+.meter-channel { border-top: 1px solid currentColor; border-top-color: rgba(127,127,127,.35); padding-top: .5rem; margin-top: .5rem; }
+.meter-channel dd { overflow-wrap: anywhere; }
+
+/* Bill analysis table: wraps at phone width */
+.bill { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.bill th, .bill td { padding: .3rem .25rem; text-align: left; vertical-align: top; overflow-wrap: anywhere; border-top: 1px solid var(--line, #ddd); }
+.bill th { width: 38%; font-weight: 600; }
+.bill td.muted { font-size: .85em; }
+/* Bill analysis uses long labels: cap the label column so values keep their width at phone size */
+.facts.bill-facts { grid-template-columns: minmax(6rem, 40%) minmax(0, 1fr); }
+
+/* 3D demo view (scene.html). CSS 3D only: no library, works offline. Objects stand on a tilted floor; only states
+   the readings measured animate, and unknown states are grey and still. */
+@media (min-width: 56rem) { .columns.three { grid-template-columns: repeat(3, 1fr); } }
+.scene3d { perspective: 60rem; height: 19rem; padding-top: 2.5rem; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.floor { position: relative; width: min(100%, 30rem); height: 11rem; transform-style: preserve-3d; transform: rotateX(58deg) rotateZ(-28deg);
+  background: repeating-linear-gradient(0deg, transparent 0 1.9rem, var(--line) 1.9rem 2rem), repeating-linear-gradient(90deg, #f4f7f6 0 1.9rem, var(--line) 1.9rem 2rem); border-radius: 6px; }
+.obj { position: absolute; bottom: 30%; width: 4.5rem; text-align: center; transform-origin: bottom center; transform: rotateZ(28deg) rotateX(-58deg); }
+.obj b { display: block; font-size: .8rem; margin-top: .2rem; }
+.obj-tank { left: 6%; } .obj-pump { left: 38%; } .obj-charger { left: 70%; }
+.obj .box { position: relative; height: 5.5rem; border: 2px solid var(--ink); border-radius: 4px; background: var(--panel); overflow: hidden;
+  box-shadow: .4rem .3rem 0 rgba(18,51,59,.18); display: flex; align-items: center; justify-content: center; }
+.obj .q { display: none; font: 700 2rem var(--display); color: var(--unknown); }
+.obj[data-state="unknown"] .box { background: repeating-linear-gradient(45deg, var(--unknown-bg) 0 .4rem, #f4f5fa .4rem .8rem); border-style: dashed; border-color: var(--unknown); }
+.obj[data-state="unknown"] .q { display: block; }
+.obj[data-state="unknown"] .water, .obj[data-state="unknown"] .fan, .obj[data-state="unknown"] .bolt { display: none; }
+.obj-tank .water { position: absolute; left: 0; right: 0; bottom: 0; height: var(--level, 0%); background: var(--water); }
+.fan { width: 3rem; height: 3rem; border-radius: 50%; background: conic-gradient(var(--ink) 0 20deg, transparent 20deg 120deg, var(--ink) 120deg 140deg, transparent 140deg 240deg, var(--ink) 240deg 260deg, transparent 260deg); border: 2px solid var(--ink); }
+.bolt { width: 1.6rem; height: 2.8rem; background: var(--line); clip-path: polygon(60% 0, 0 55%, 45% 55%, 30% 100%, 100% 40%, 55% 40%); }
+.obj-pump[data-state="on"] .box, .obj-charger[data-state="on"] .box { border-color: var(--good); }
+.obj-charger[data-state="on"] .bolt { background: var(--peak); }
+@media (prefers-reduced-motion: no-preference) {
+  .obj-pump[data-state="on"] .fan { animation: nw-spin 1.2s linear infinite; }
+  .obj-charger[data-state="on"] .bolt { animation: nw-pulse 1.4s ease-in-out infinite; }
+  .obj-tank .water { transition: height .6s ease; }
+}
+/* Connection lost: the scene keeps the last received values but nothing moves, so it never looks live. */
+[data-connection="lost"] .obj .fan, [data-connection="lost"] .obj .bolt { animation: none !important; }
+[data-connection="lost"] .obj .box { opacity: .55; }  /* on the leaf box: opacity on the 3D floor would flatten the scene */
+@keyframes nw-spin { to { transform: rotate(360deg); } }
+@keyframes nw-pulse { 50% { opacity: .35; } }
+@media (forced-colors: active) { .obj-tank .water, .bolt { background: CanvasText; } }
+.timeline { list-style: none; padding: 0; margin: 0; display: grid; gap: .35rem; }
+
+/* Campus (campus.html): four buildings in a 2x2 grid, each its own small isometric scene from the shared building view. */
+.campus-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
+.bldg { display: flex; flex-direction: column; align-items: stretch; text-align: left; padding: .5rem; min-width: 0;
+  background: linear-gradient(160deg, #f3f7f8, #e3ecee); border: 2px solid var(--line); border-radius: 6px; color: var(--ink); font: inherit; cursor: pointer; }
+.bldg[aria-pressed="true"] { border-color: var(--ink); box-shadow: 0 0 0 3px var(--water); }
+.bldg-name { font-weight: 700; }
+.bldg-scene { display: block; overflow: hidden; }
+.bldg .scene3d { zoom: .55; }
+.bldg-status { font-size: .875rem; }
+.campus-total { margin-top: .75rem; }
+.side-cols { display: grid; gap: .5rem; margin-bottom: .75rem; }
+.side-cols h2 { font-size: 1rem; margin-bottom: 0; }
+.members { width: 100%; border-collapse: collapse; margin: .5rem 0; }
+.members th, .members td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
+.members select { min-height: 2.5rem; max-width: 100%; }
+.inline-form { display: flex; flex-wrap: wrap; gap: .5rem; align-items: end; margin-top: .75rem; }
+.demo-links code { display: block; font-size: .75rem; overflow-wrap: anywhere; }
+@media (max-width: 30rem) { .bldg .scene3d { zoom: .4; } .controls th, .controls td { padding: .25rem; } }
+.side-cols .big { font-size: 1.125rem; }

@@ -31,18 +31,38 @@ const NW_API = (() => {
   // crypto.randomUUID is unavailable on plain http, which is how phones reach the local service.
   const requestId = (prefix) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 
-  async function call(method, path, body) {
+  // Requests in flight, so a sign-out or session change can cancel them (abortAll). A cancelled request rejects with
+  // code ABORTED; callers drop it rather than showing an error.
+  const inFlight = new Set();
+  const aborted = () => new ApiError(0, 'ABORTED', 'The request was cancelled because the session changed.');
+
+  // timeoutMs (optional): abort a request the service has not answered in time; it rejects with code TIMEOUT, and the
+  // service may still have acted on it, so callers retry with the same request ID.
+  async function call(method, path, body, timeoutMs) {
     const headers = {};
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     if (token()) headers.Authorization = `Bearer ${token()}`;
+    const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+    if (ctrl) inFlight.add(ctrl);
+    let timedOut = false;
+    const timer = ctrl && timeoutMs ? setTimeout(() => { timedOut = true; ctrl.abort(); }, timeoutMs) : null;
     let res;
-    try {
-      res = await fetch(`/api/v1${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
-    } catch {
-      throw new ApiError(0, 'NETWORK', 'Cannot reach the NivaWatt service. Check that it is running and that this device is on the same network.');
-    }
     let data = null;
-    try { data = await res.json(); } catch { /* non-JSON error page; handled below */ }
+    try {
+      try {
+        res = await fetch(`/api/v1${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal: ctrl?.signal });
+      } catch {
+        if (timedOut) throw new ApiError(0, 'TIMEOUT', 'The service did not answer in time. The request may still have been applied.');
+        if (ctrl?.signal.aborted) throw aborted();
+        throw new ApiError(0, 'NETWORK', 'Cannot reach the NivaWatt service. Check that it is running and that this device is on the same network.');
+      }
+      try { data = await res.json(); } catch { /* non-JSON error page; handled below */ }
+      if (timedOut) throw new ApiError(0, 'TIMEOUT', 'The service did not answer in time. The request may still have been applied.');
+      if (ctrl?.signal.aborted) throw aborted();
+    } finally {
+      if (timer) clearTimeout(timer);
+      if (ctrl) inFlight.delete(ctrl);
+    }
     if (res.ok) return data;
     const err = (data && data.error) || {};
     const failure = new ApiError(res.status, err.code || `HTTP_${res.status}`, err.message || `The service returned status ${res.status}.`, data && data.revision);
@@ -60,7 +80,9 @@ const NW_API = (() => {
     requestId,
     init(r, signedOut) { role = r; onSignedOut = signedOut; },
     hasSession: () => Boolean(token()),
-    signOut: () => setToken(null),
+    // Cancels every request still in flight (best effort: the service may already have acted on one).
+    abortAll() { inFlight.forEach((c) => c.abort()); inFlight.clear(); },
+    signOut: () => setToken(null),  // unchanged; the manager page cancels its own requests via abortAll()
     async signIn(credentials) {
       const out = await call('POST', '/demo/session', { role, ...credentials });
       setToken(out.token);
@@ -88,6 +110,8 @@ const NW_API = (() => {
     operatorState: (runId) => call('GET', `/operator/state?run_id=${q(runId)}`),
     state: (runId, apartmentId) => call('GET', `/state?run_id=${q(runId)}&apartment_id=${q(apartmentId)}`),
     report: (runId) => call('GET', `/runs/${q(runId)}/report`),
+    runBilling: (runId) => call('GET', `/runs/${q(runId)}/billing`),
+    billingScenario: () => call('GET', '/billing/scenario'),
     issueAdvisory: (runId, knownFromInterval, forecast, windows, targets) => call('POST', '/events', {
       request_id: `advisory-${runId}-${forecast.forecast_id}-${windows.map((w) => w.start).join('_')}`,
       kind: 'peak_advisory',
@@ -106,6 +130,10 @@ const NW_API = (() => {
       ...(reading === 'delayed' ? { delay_observation: true } : {}),
       ...(reading === 'missing' ? { drop_observation: true } : {}),
     }),
+    // Campus group: the caller builds bodies with stable request IDs (NW_CAMPUS) and resends them unchanged on retry.
+    createRunWith: (body) => call('POST', '/runs', body),
+    postEvent: (body) => call('POST', '/events', body),
+    stepWith: (runId, body, timeoutMs) => call('POST', `/runs/${q(runId)}/step`, body, timeoutMs),
     delivered: (proposalId) => call('POST', `/proposals/${q(proposalId)}/delivered`),
     decide: (proposal, optionId, decision) => call('POST', `/proposals/${q(proposal.proposal_id)}/decision`, {
       request_id: `decision-${proposal.proposal_id}-${optionId}-${decision}`,

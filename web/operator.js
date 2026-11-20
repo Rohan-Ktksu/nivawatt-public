@@ -1,12 +1,39 @@
 (() => {
-  const { html, fmtTime, fmtClock, fmtWindows, fmtNum, fmtSource, fmtReason, fmtStatus, fmtQuality, fmtScope, fmtAction, fmtError } = NW_UI;
+  const { html, fmtTime, fmtClock, fmtWindows, fmtNum, fmtSource, fmtReason, fmtRs, fmtBillStatus, fmtSaving, fmtStatus, fmtQuality, fmtScope, fmtAction, fmtError } = NW_UI;
   const $ = (id) => document.getElementById(id);
   const POLL_MS = 5000;
   const SCENARIOS = {
     branch: null,
     aggregate: { observation_scope: 'aggregate' },
     dry: { source_outage_intervals: Array.from({ length: 96 }, (_, i) => i), tank_init_l: 3100 },
+    // server-side presets (fictional 100-flat building with a synthetic whole-connection reading)
+    flats100_advisory_only: null,
+    flats100_demand_aware_experimental: null,
   };
+  const CONFIDENCE = { normal: 'Normal', reduced: 'Reduced', unavailable: 'Unavailable' };
+  const SOURCE = { default: 'default for new runs', explicit: 'chosen explicitly', legacy: 'run created before the default changed' };
+
+  function schedulingBlock(s) {
+    const st = s.status;
+    const fallback = s.effective_mode === 'fallback_advisory_only';
+    return html`<h3>Scheduling policy</h3>
+      <div data-testid="scheduling-policy">
+        ${fallback ? html`<div class="notice tone-warn" data-testid="planning-fallback"><p><span aria-hidden="true">! </span><strong>Fallback in use: advisory-only planning.</strong> ${(st?.reasons || []).join('; ')}.</p></div>` : ''}
+        <dl class="facts">
+          <dt>Requested policy</dt><dd>${s.requested_policy_label} (${SOURCE[s.requested_source] || s.requested_source})</dd>
+          <dt>Effective planning mode</dt><dd>${s.effective_mode_label}</dd>
+        </dl>
+        ${st ? html`<dl class="facts">
+          <dt>Forecast confidence</dt><dd>${CONFIDENCE[st.confidence] || st.confidence}</dd>
+          <dt>Demand target</dt><dd>${st.target_kva == null ? 'None while in fallback' : fmtNum(st.target_kva, 'kVA, a planning target', 1)}</dd>
+          <dt>Whole-building history</dt><dd>${st.forecast.history_source ? `${fmtNum(st.forecast.history_days_available)} days (${st.forecast.history_source})` : 'None: no whole-building measurement'}</dd>
+        </dl>
+        ${fallback ? '' : st.reasons.map((r) => html`<div class="notice tone-warn"><p><span aria-hidden="true">! </span>${r}</p></div>`)}
+        <p class="muted">${s.target_note}</p>
+        <p class="muted">${s.fallback_note}</p>` : ''}
+        ${s.whole_connection_measurement ? html`<p class="muted">Whole-building reading: ${s.whole_connection_measurement}</p>` : ''}
+      </div>`;
+  }
 
   const store = {
     get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
@@ -106,6 +133,7 @@
   }
 
   function renderAdvisory() {
+    renderRunGuide();
     const adv = op?.active_advisory;
     if (adv) {
       put('advisory', html`
@@ -171,10 +199,11 @@
             <dt>Manager reports</dt><dd>${a.execution ? `${fmtNum(a.execution.claims?.length)} on this plan. Reports are not measurements` : 'None'}</dd>
           </dl>`;
       })}
+      ${apt?.scheduling ? schedulingBlock(apt.scheduling) : ''}
       <h3>Measurement evidence</h3>
       <p>${chip(q)}</p>
       <dl class="facts">
-        <dt>Source</dt><dd>${o ? fmtSource(o.source_kind) : 'No reading yet'}</dd>
+        <dt>Source</dt><dd>${o ? fmtSource(o.source_kind, o.raw_bench) : 'No reading yet'}</dd>
         <dt>Meters</dt><dd>${fmtScope(o?.measurement_scope)}</dd>
         <dt>Usable readings</dt><dd>${fmtNum(cov.valid_observations)} of ${fmtNum(cov.intervals_elapsed)} intervals</dd>
         <dt>Utility smart meter</dt><dd>Not connected</dd>
@@ -183,17 +212,88 @@
       ${op.warnings.map((w) => html`<p class="muted">${w}</p>`)}`);
   }
 
+  // Bill analysis: this run's participating-load charges (labelled by provenance) and the committed illustrative
+  // monthly scenario. Never another run's figures: stale responses are dropped and the panel is tagged with its run.
+  let scenario = null;
+  async function renderBilling() {
+    if (!op) { put('billing', ''); return; }
+    const forRun = runId;
+    if ($('billing-run')?.dataset.runId !== forRun) put('billing', html`<h2>Electricity cost (pump and EV circuits)</h2><p class="muted">Loading circuit costs for run <code>${forRun}</code>…</p>`);
+    let b;
+    try {
+      b = await NW_API.runBilling(forRun);
+      if (!scenario) scenario = await NW_API.billingScenario().catch(() => null);
+    } catch (e) {
+      if (runId !== forRun) return;
+      put('billing', html`<h2>Electricity cost (pump and EV circuits)</h2><p>Not available: ${fmtError(e)}</p>`);
+      return;
+    }
+    if (runId !== forRun) return;
+    const calc = b.calculation;
+    const st = fmtBillStatus(calc ? calc.status : b.status);
+    const lines = calc ? calc.lines : [];
+    put('billing', html`
+      <h2>Electricity cost (pump and EV circuits)</h2>
+      <div id="billing-run" data-run-id="${forRun}">
+        <h3>${b.label}</h3>
+        <p data-testid="amount-kind"><strong>What these amounts are:</strong> ${calc?.amount_kind_label || "Energy-related charges of the participating circuits (pump and EV chargers) only: not the apartment's bill"}.</p>
+        <p><span class="chip tone-${st.tone}"><span aria-hidden="true">${st.icon}</span>${st.label}</span></p>
+        <dl class="facts bill-facts">
+          <dt>What this covers</dt><dd>Energy-related charges of the pump and EV charger circuits only. Fixed and demand charges belong to the whole connection and are not shown.</dd>
+          <dt>Tariff category</dt><dd>${calc?.category_label || b.category} (assumed for illustration; the real category comes from the connection's bill)</dd>
+          <dt>Energy measured so far</dt><dd>${b.energy_kwh_known === null || b.energy_kwh_known === undefined ? 'Unknown' : fmtNum(b.energy_kwh_known, 'kWh', 3)} over ${fmtNum(b.elapsed_hours, 'h', 2)}${b.intervals_missing ? `; ${b.intervals_missing} interval(s) without a usable reading (unknown, not zero)` : ''}</dd>
+          ${b.recovered_unassigned_kwh ? html`<dt>Recovered after lost readings</dt><dd>${fmtNum(b.recovered_unassigned_kwh, 'kWh', 3)}, not placed in time, not added</dd>` : ''}
+        </dl>
+        ${b.reason ? html`<p class="muted">${b.reason}</p>` : ''}
+        ${lines.length ? html`<table class="bill" data-testid="bill-lines"><tbody>${lines.map((l) => html`<tr><th scope="row">${l.label}</th><td>${fmtRs(l.amount_rs)}</td><td class="muted">${l.amount_rs === null ? 'Unknown: ' + l.formula : l.formula}</td></tr>`)}</tbody></table>
+          <p data-testid="bill-total"><strong>Circuit energy charges, total:</strong> ${calc.total_rs === null ? 'Not shown: at least one charge is unknown, so these are partial circuit charges.' : `${fmtRs(calc.total_rs)} (circuits only, not the apartment's bill)`}</p>` : ''}
+        ${(calc?.unavailable || []).map((u) => html`<p class="muted">Missing input: ${u}</p>`)}
+        ${(calc?.assumptions || []).map((a) => html`<p class="muted">Assumption: ${a}</p>`)}
+      </div>
+      ${scenario ? scenarioBlock(scenario) : html`<p class="muted">The illustrative monthly scenario is not available.</p>`}`);
+  }
+
+  function scenarioBlock(s) {
+    const row = s.scenarios.find((r) => r.scenario === 'base') || s.scenarios[0];
+    const c = row.comparison;
+    return html`<div data-testid="billing-scenario">
+      <h3>Illustrative simulation: a month of baseline vs coordinated operation</h3>
+      <p><strong>What these amounts are:</strong> energy-related charges of the pump and EV circuits in a synthetic simulation, partial (FPPCA unknown). Not the apartment's bill.</p>
+      <p class="muted">Synthetic plants, ${s.protocol.days} consecutive days${s.protocol.carry_equipment_state ? ', pump on/off state and its minimum on/off history carried across midnight' : ''}, same withdrawals and EV requests for both policies. Not an estimate for any real apartment; not a bill. Tariff: ${s.protocol.tariff.category}, ${s.protocol.tariff.period_start} to ${s.protocol.tariff.period_end}.</p>
+      <dl class="facts bill-facts">
+        <dt>Equal service</dt><dd>${c.comparable ? 'Yes: same water delivered, no unmet demand, same EV energy by departure' : c.comparability}</dd>
+        <dt>Baseline (float switch, charge on arrival)</dt><dd>${fmtNum(row.baseline.kwh, 'kWh', 1)}; known circuit energy charges ${fmtRs(c.costs.baseline.known_components_rs)} (partial: FPPCA unknown)</dd>
+        <dt>Coordinated (advisory with metered replanning)</dt><dd>${fmtNum(row.coordinated.kwh, 'kWh', 1)}; storage-adjusted known circuit energy charges ${fmtRs(c.costs.coordinated_storage_adjusted.known_components_rs)} (partial: FPPCA unknown)</dd>
+        <dt>Water left in the tank at month end</dt><dd>${fmtNum(row.baseline.final_tank_l, 'L', 0)} vs ${fmtNum(row.coordinated.final_tank_l, 'L', 0)} (difference credited as pump energy)</dd>
+        <dt>Water lost as overflow</dt><dd>${fmtNum(c.overflow_l.baseline, 'L', 0)} vs ${fmtNum(c.overflow_l.coordinated, 'L', 0)}</dd>
+        <dt>Headline difference (overflow artefact excluded)</dt><dd data-testid="billing-saving">${fmtSaving(c.cost_difference_rs_excluding_overflow, c.comparable)}</dd>
+        <dt>Time-of-day effect</dt><dd>${fmtRs(c.time_shifting_effect_rs)}: LT-1 has one flat energy rate.</dd>
+        <dt>Demand charge effect</dt><dd>Not estimable: needs the whole connection's maximum demand.</dd>
+        <dt>Fuel cost adjustment (FPPCA)</dt><dd>Unknown: no verified monthly rate; not included.</dd>
+        <dt>Energy in advisory hours</dt><dd>${fmtNum(c.peak_window_kwh_difference, 'kWh', 1)} (grid relevance only; no bill value under LT-1)</dd>
+        <dt>Pump starts (wear trade-off)</dt><dd>${row.baseline.pump_starts} vs ${row.coordinated.pump_starts}</dd>
+      </dl>
+      <p class="muted">The baseline's extra energy is water pumped past a full tank, an artefact of the model's 15-minute steps, so it is not counted as a saving. Low/base/high scenario differences after removing overflow: ${s.scenarios.map((r) => `${r.scenario} ${fmtSaving(r.comparison.cost_difference_rs_excluding_overflow, r.comparison.comparable).split(':')[0].toLowerCase()}`).join(', ')}. These are scenario assumptions, not confidence intervals.</p>
+    </div>`;
+  }
+
   async function renderReport() {
     if (!op) { put('report', html`<h2>Run outcome</h2><p>Start a run to see its outcome.</p>`); return; }
+    // Never show another run's outcome: replace it while this run's report loads, and drop a response that arrives
+    // after the operator has switched runs.
+    const forRun = runId;
+    if ($('outcome-basis')?.dataset.runId !== forRun) put('report', html`<h2>Run outcome</h2><p class="muted" id="report-loading">Loading the outcome for run <code>${forRun}</code>…</p>`);
     let m;
-    try { m = await NW_API.report(runId); } catch (e) {
+    try { m = await NW_API.report(forRun); } catch (e) {
+      if (runId !== forRun) return;
       put('report', html`<h2>Run outcome</h2><p>The report is not available: ${fmtError(e)}</p>`);
       return;
     }
+    if (runId !== forRun) return;
     const ev = Object.keys(m.ev_delivered_model_kwh || {});
     put('report', html`
       <h2>Run outcome</h2>
-      <div class="notice tone-unknown" id="outcome-basis"><p>${fmtSource(m.provenance?.source_kind)}. Worked out by the service from ${m.provenance?.plant || 'an unstated source'}.</p></div>
+      <div class="notice tone-unknown" id="outcome-basis" data-run-id="${forRun}"><p>${fmtSource(m.provenance?.source_kind, { power_scale: m.provenance?.meter?.telemetry_power_scale, volume_scale: m.provenance?.meter?.telemetry_volume_scale })}${m.provenance?.source_kind === 'scaled_hardware' ? '' : '.'} Worked out by the service from ${m.provenance?.plant || 'an unstated source'}.</p></div>
       <dl class="facts">
         <dt>Intervals run</dt><dd>${fmtNum(m.intervals_simulated)} (${m.model_dt_minutes} min each)</dd>
         <dt>Highest participating load</dt><dd>${fmtNum(m.peak_participating_model_kw, 'kW (model)')}</dd>
@@ -216,11 +316,59 @@
       </details>`);
   }
 
+  function runType(run) {
+    if (run.observation_source !== 'telemetry') return 'Browser simulation';
+    return run.meter_clock === 'simulated' ? 'Terminal emulator' : 'Device telemetry';
+  }
+
+  function renderRunGuide() {
+    if (!op || op.run_id !== runId) {
+      put('run-link', html`<p>${runId ? `Loading ${runId}…` : 'Select the run ID printed by your emulator, or create a browser simulation below.'}</p>`);
+      return;
+    }
+    const run = op.run_id;
+    const apartment = op.apartments[0];
+    const query = new URLSearchParams({ run, apartment: apartment.apartment_id });
+    const type = runType({ observation_source: op.observation_source, meter_clock: apt?.meter_clock });
+    const time = fmtClock(op.clock.model_time_utc);
+    const action = apartment.execution?.next_action;
+    const chargeDue = action?.ev && action.ev !== 'OFF';
+    const reported = apartment.execution?.claims?.some((c) =>
+      c.interval_index === op.clock.interval_index && c.action_id.endsWith(':ev'));
+    const terminal = type === 'Terminal emulator';
+    const advance = terminal ? 'Press Enter at the emulator prompt.' : 'Use Simulation control to advance one interval.';
+    const intervalEnded = op.clock.interval_index >= op.clock.horizon_intervals;
+    let next;
+    if (intervalEnded) next = html`This run is complete. <a href="#report">View results</a>.`;
+    else if (!forecast && !op.active_advisory) next = html`<a href="#forecast-panel">Load the saved forecast</a> for this run.`;
+    else if (!op.active_advisory) next = html`<a href="#advisory">Review and issue the peak advisory</a>.`;
+    else if (apartment.pending_proposals) next = html`Open the manager page and review the waiting plan.`;
+    else if (!apartment.active_commitment_id) next = html`The manager needs to accept a plan before reporting an action.`;
+    else if (type === 'Device telemetry') next = html`Use the physical switches for this interval and wait for a device reading.`;
+    else if (chargeDue && reported) next = terminal
+      ? html`Charging was reported. To rehearse a missed charge, type <code>ev off</code> and press Enter. Watch the 3D view for the meter verdict.`
+      : html`Charging was reported. To rehearse a missed charge, leave the charger Off and select <strong>Advance one interval</strong>.`;
+    else if (chargeDue) next = html`To rehearse a missed charge, tap <strong>I started charging ${action.ev}</strong> on the manager page before advancing.`;
+    else next = html`${action ? fmtAction(action) + '. ' : ''}${advance}`;
+    const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
+    put('run-link', html`
+      <div class="demo-progress">
+        <p><strong>${type}</strong> <code>${run}</code> · ${time} IST · Interval ${op.clock.interval_index} / ${op.clock.horizon_intervals}</p>
+        <p><strong>Next step</strong> ${next}</p>
+        ${chargeDue && !reported && !apartment.pending_proposals && !intervalEnded && type !== 'Device telemetry'
+          ? html`<p class="muted">For a normal check, follow the accepted action and advance. ${advance}</p>` : ''}
+        <nav class="demo-links" aria-label="Views for this run">
+          <a href="${location.origin}/manager?${query}" id="manager-link">Manager page</a>
+          <a href="/web/scene.html?${query}" id="scene-link">3D demo view</a>
+          ${op.observation_source !== 'telemetry' ? html`<a href="#sim">Simulation controls</a>` : ''}
+        </nav>
+        ${loopback ? html`<p class="muted">For your phone, open this operator page with the laptop’s Wi-Fi IP first, then share the manager link above.</p>` : ''}
+      </div>`);
+  }
+
   function renderSim() {
     $('sim').hidden = !op;
-    if (!op) { put('run-link', ''); return; }
-    const url = `${location.origin}/manager?run=${encodeURIComponent(runId)}`;
-    put('run-link', html`<p style="margin-top:.75rem">Current run <code>${runId}</code></p><p>Manager link: <a href="${url}" id="manager-link">${url}</a></p>`);
+    if (!op) return;
     const ex = op.apartments[0]?.execution;
     const ended = op.clock.interval_index >= op.clock.horizon_intervals;
     put('due', html`
@@ -318,7 +466,7 @@
       const { runs } = await NW_API.listRuns();
       put('run-picker', html`
         <option value="">${runs.length ? 'Choose a run' : 'No earlier runs'}</option>
-        ${runs.map((r) => html`<option value="${r.run_id}" ${r.run_id === runId ? on('selected') : ''}>${r.run_id}, ${r.apartment_id}, ${r.observation_source === 'telemetry' ? 'device' : 'simulator'}, ${r.observation_scope} meters, interval ${r.interval_index}</option>`)}`);
+        ${runs.map((r) => html`<option value="${r.run_id}" ${r.run_id === runId ? on('selected') : ''}>${runType(r)} · ${r.run_id} · interval ${r.interval_index}</option>`)}`);
     } catch (e) {
       if (e.status !== 401) put('run-picker', html`<option value="">Could not list runs</option>`);
     }
@@ -331,16 +479,23 @@
   }
 
   async function refresh() {
-    if (runId) {
+    const selected = runId;
+    if (selected) {
       try {
-        const nextOp = await NW_API.operatorState(runId);
-        const nextApt = await NW_API.state(runId, nextOp.apartments[0].apartment_id);
+        const nextOp = await NW_API.operatorState(selected);
+        const nextApt = await NW_API.state(selected, nextOp.apartments[0].apartment_id);
+        if (selected !== runId || !NW_API.hasSession()) return;
         const json = JSON.stringify([nextOp, nextApt]);
         op = nextOp;
         apt = nextApt;
         // An opened run keeps showing the forecast its advisory was issued from.
         const issuedFrom = nextOp.active_advisory?.forecast_id;
-        if (issuedFrom && issuedFrom !== forecast?.forecast_id) await loadForecast(await NW_API.forecast(issuedFrom));
+        if (issuedFrom && issuedFrom !== forecast?.forecast_id) {
+          const snapshot = await NW_API.forecast(issuedFrom);
+          if (selected !== runId || !NW_API.hasSession()) return;
+          await loadForecast(snapshot);
+        }
+        if (selected !== runId || !NW_API.hasSession()) return;
         if (json !== lastJson) {
           lastJson = json;
           renderMeta();
@@ -349,10 +504,11 @@
           renderSim();
           if (document.activeElement !== $('run-picker')) renderRunPicker();
           await renderReport();
+          await renderBilling();
         }
         if (connectionWarned) { connectionWarned = false; toast(); }
       } catch (e) {
-        if (e.status === 401) return;
+        if (selected !== runId || e.status === 401) return;
         if (e.status === 404) {
           runId = null;
           op = null;
@@ -375,6 +531,7 @@
     renderApartments();
     renderSim();
     renderReport();
+    renderBilling();
   }
 
   async function loadForecast(snapshot) {
@@ -426,16 +583,25 @@
     });
   });
 
+  function selectRun(id) {
+    runId = id;
+    op = null;
+    apt = null;
+    lastJson = null;
+    store.set('nivawatt.operator.run', id);
+    history.replaceState(null, '', `?run=${encodeURIComponent(id)}`);
+    put('step-result', '');
+    renderMeta();
+    renderAdvisory();
+    renderSim();
+  }
+
   $('create-run').addEventListener('click', (ev) => {
     if (!forecast) { toast('warn', 'Load a forecast first, so the run starts on the forecast day.'); return; }
     busy(ev.target, async () => {
       const scenario = $('scenario').value;
       const made = await NW_API.createRun(forecast.forecast_start, scenario, SCENARIOS[scenario]);
-      runId = made.run_id;
-      store.set('nivawatt.operator.run', runId);
-      history.replaceState(null, '', `?run=${encodeURIComponent(runId)}`);
-      $('step-result').innerHTML = '';
-      put('advisory', '');
+      selectRun(made.run_id);
       renderRunPicker();
       toast('good', 'Run started. Approve an advisory, then share the manager link.');
     });
@@ -443,11 +609,9 @@
 
   $('run-picker').addEventListener('change', (ev) => {
     if (!ev.target.value) return;
-    runId = ev.target.value;
-    store.set('nivawatt.operator.run', runId);
-    history.replaceState(null, '', `?run=${encodeURIComponent(runId)}`);
-    $('step-result').innerHTML = '';
-    put('advisory', '');
+    selectRun(ev.target.value);
+    put('report', html`<h2>Run outcome</h2><p class="muted" id="report-loading">Loading the outcome for run <code>${runId}</code>…</p>`);
+    put('billing', html`<h2>Electricity cost (pump and EV circuits)</h2><p class="muted">Loading circuit costs for run <code>${runId}</code>…</p>`);
     busy(ev.target, async () => {});
   });
 

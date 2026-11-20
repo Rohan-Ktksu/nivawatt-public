@@ -141,6 +141,9 @@ async function operatorTab(ctx) {
     await see(op, 'Run started');
     await see(op, 'No advisory is active');
     link = await op.locator('#manager-link').getAttribute('href');
+    assert.match(await op.locator('#run-link').innerText(), /Browser simulation.*Review and issue the peak advisory/s);
+    const scene = await op.locator('#scene-link').getAttribute('href');
+    assert.strictEqual(new URL(scene, BASE).searchParams.get('run'), new URL(link).searchParams.get('run'));
     const p = await managerOpen(mgCtx, link);
     await see(p, 'No action yet');
     await see(p, 'No advisory has been issued');
@@ -170,11 +173,11 @@ async function operatorTab(ctx) {
   });
 
   await check('done tap: records a report only, and a double tap makes one report', async () => {
-    const button = mg.locator('button[data-act=claim]').first();
+    const button = mg.locator('#next button[data-act=claim][data-kind=ev]');
     await button.dblclick();
     await see(mg, 'Sensors have not confirmed it');
     await see(mg, 'Sensors have not checked your latest report');
-    await see(mg, 'Reported, waiting for sensors');
+    await see(mg, 'Charging reported');
     await absent(mg, 'Sensors agree');
     await mg.waitForFunction(() => /Reports made\s*1\b/.test(document.getElementById('execution').innerText));
     await shot(mg, 'manager-3-done-reported');
@@ -203,9 +206,11 @@ async function operatorTab(ctx) {
     await operatorStep(op, { follow: true });
     await reload(mg);
     await see(mg, 'Sensors agree');
-    await see(mg, 'Delivered, verified');
+    await see(mg, 'Allocated to this EV (inferred)');
     const text = await mg.locator('#charging').innerText();
-    assert.match(text, /Delivered, verified\s*0\.83 kWh/);
+    assert.match(text, /Allocated to this EV \(inferred\)\s*0\.83 kWh/);
+    assert.match(text, /Verified for this EV\s*Not available/);
+    assert.match(text, /EV charger group, measured\s*0\.83 kWh/);
     const history = await mg.locator('#history').innerText();
     assert.match(history, /Sensors disagree/, 'the contradicted report stays listed after the revision');
     assert.match(history, /You reported: (charging|pump) on/);
@@ -280,8 +285,9 @@ async function operatorTab(ctx) {
     await see(m, 'cannot tell whether it came from the pump or the charger');
     await see(m, 'cannot be attributed to an EV');
     const charging = await m.locator('#charging').innerText();
-    assert.match(charging, /Delivered, verified\s*Unknown/);
-    assert.match(charging, /Still to deliver\s*Unknown/);
+    assert.match(charging, /Allocated to this EV \(inferred\)\s*Unknown/);
+    assert.match(charging, /Verified for this EV\s*Not available/);
+    assert.match(charging, /Still to deliver \(estimate\)\s*Unknown/);
     assert.match(await m.locator('#tank').innerText(), /Pump seen as:\s*Unknown/);
     assert.match(await m.locator('#readings').innerText(), /One combined meter/);
     await absent(m, 'Sensors agree');
@@ -355,9 +361,13 @@ async function operatorTab(ctx) {
       await tab.waitForFunction(() => document.getElementById('sim-title').textContent === 'Device run');
       assert.strictEqual(await tab.locator('#step').isVisible(), false);
       assert.strictEqual(await tab.locator('input[name=pump]').first().isVisible(), false);
-      assert.match(await tab.locator('#outcome-basis').innerText(), /device telemetry/);
+      // the outcome for THIS run, rendered from its completed report response (never the previous run's)
+      const basis = tab.locator(`#outcome-basis[data-run-id="${id}"]`);
+      await basis.waitFor();
+      assert.match(await basis.innerText(), /device telemetry/);
       await absent(tab, 'evaluator truth');
-      assert.match(await tab.locator('#run-picker').innerText(), /device/);
+      assert.match(await tab.locator('#run-picker').innerText(), new RegExp(`Terminal emulator · ${id}`));
+      assert.match(await tab.locator('#run-link').innerText(), new RegExp(`Terminal emulator ${id}`));
       await shot(tab, 'operator-8-device-run');
       await tab.close();
       const m = await managerOpen(mgCtx, `${BASE}/manager?run=${id}`);
