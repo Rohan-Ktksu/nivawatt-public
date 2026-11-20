@@ -62,12 +62,17 @@
               </select>
             </label>
             <div class="buttons"><button id="create-run" type="button">Start new run</button></div>
+            <label class="field" style="margin-top:.75rem">Open an earlier run
+              <select id="run-picker"></select>
+            </label>
             <div id="run-link"></div>
           </section>
           <section class="panel" id="sim" hidden>
-            <h2>Simulation control</h2>
-            <p class="muted">Stands in for a person at the switches. Accepting a plan never moves these.</p>
+            <h2 id="sim-title">Simulation control</h2>
             <div id="due"></div>
+            <p id="device-note" hidden>The device closes each interval when its readings arrive, so there are no switch controls here.</p>
+            <div id="sim-controls">
+            <p class="muted">Stands in for a person at the switches. Accepting a plan never moves these.</p>
             <fieldset><legend>Pump switch</legend>
               <label class="choice"><input type="radio" name="pump" value="OFF" checked> Off</label>
               <label class="choice"><input type="radio" name="pump" value="ON"> On</label>
@@ -86,9 +91,16 @@
               <button class="primary" id="step" type="button">Advance one interval</button>
             </div>
             <div id="step-result"></div>
+            </div>
           </section>
         </div>
       </div>
+      <section class="panel">
+        <h2>Policy comparison</h2>
+        <p>Runs every scheduling policy through the same simulated scenarios. All values come from the service. This is a simulation, not a bench or field result.</p>
+        <div class="buttons"><button id="run-comparison" type="button">Run simulated comparison</button></div>
+        <div id="comparison"></div>
+      </section>
       <p><button type="button" id="sign-out">Sign out</button></p>
     </div>
   </main>

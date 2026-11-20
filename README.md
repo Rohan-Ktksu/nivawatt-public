@@ -1,8 +1,8 @@
 # NivaWatt
 
-**v1.0.0 · Login and scheduling**
+**v2.0.0 · Apartment simulation**
 
-Operator and apartment manager sign-in, forecast replay and peak advisories, pump and EV scheduling, and plan acceptance.
+Browser simulation controls, policy comparison, and a software device emulator for meter-feedback demonstrations.
 
 NivaWatt demonstrates how apartment buildings can schedule water pumps and EV chargers around a demand advisory, then use readings to verify what happened. A manager accepts each plan. Equipment switching in the demo is simulated.
 
@@ -23,7 +23,7 @@ In Operator, load the saved forecast, start a browser run and issue the advisory
 
 ## Screenshots
 
-![manager plan](docs/screenshots/manager-plan.png)
+![simulation comparison](docs/screenshots/simulation-comparison.png)
 
 ## What the numbers represent
 

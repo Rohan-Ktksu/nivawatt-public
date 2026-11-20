@@ -66,10 +66,12 @@ test('a pending proposal is never given as the action to take', () => {
   assert.ok(r.why.some((w) => /still your plan/.test(w)));
 });
 
-test('aggregate metering leaves remaining EV energy unknown', () => {
-  const session = { ev_id: 'EV_1', remaining_model_kwh: 10 };
-  assert.strictEqual(ui.evRemaining(baseState({ readiness: { charging_status_by_ev: { EV_1: 'UNVERIFIED' } } }), session), null);
-  assert.strictEqual(ui.evRemaining(baseState({ readiness: { charging_status_by_ev: { EV_1: 'PENDING' } } }), session), 10);
+test('device readings describe both payload shapes, and unknown is not zero', () => {
+  assert.strictEqual(ui.fmtRawBench(null), null);
+  assert.match(ui.fmtRawBench({ device_id: 'bench-1', pump_power_w: 3 }), /One reading from bench-1/);
+  assert.match(ui.fmtRawBench({ sample_count: 0, excluded_samples: 2 }), /No readings arrived.*2 duplicate/);
+  assert.strictEqual(ui.fmtRawBench({ sample_count: 15, excluded_samples: 0, mean_pump_w: 0, mean_ev_load_w: 3300 }), '15 readings. Mean pump 0 W, mean charger 3,300 W.');
+  assert.strictEqual(ui.fmtRawBench({ sample_count: 1, excluded_samples: 0, mean_pump_w: null, mean_ev_load_w: null, mean_aggregate_w: null }), '1 reading. Mean combined Unknown.');
 });
 
 test('only real shortfalls are reported', () => {

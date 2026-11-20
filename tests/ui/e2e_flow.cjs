@@ -8,14 +8,17 @@
 // NW_BASE defaults to http://127.0.0.1:8780. It uses the installed Chrome (NW_CHANNEL to change).
 // NW_TTL_BASE: optional second service started with NIVAWATT_PROPOSAL_TTL_S=3, for the expiry check.
 // NW_ONLY_TTL=1 runs only that check, for machines short of memory.
-// NW_SENSING=0 skips the checks that need the sensing fields from rohan-core PR #4.
+// NW_PYTHON: the repo's Python, to also run the device check. The emulator reads config/local.json, so the
+// service must use that file too (no NIVAWATT_CODES).
+// To try plain http as a phone would, without opening the service to the network:
+//   NW_ARGS=--host-resolver-rules=MAP nivawatt.test 127.0.0.1   NW_BASE=http://nivawatt.test:8780
 const path = require('node:path');
 const assert = require('node:assert');
+const { spawnSync } = require('node:child_process');
 const { chromium } = require('playwright-core');
 
 const BASE = process.env.NW_BASE || 'http://127.0.0.1:8780';
 const TTL_BASE = process.env.NW_TTL_BASE;
-const SENSING = process.env.NW_SENSING !== '0';
 const OP = process.env.NW_OPERATOR_CODE;
 const MG = process.env.NW_MANAGER_CODE;
 const SHOTS = process.env.NW_SHOTS || path.join(__dirname, 'screenshots');
@@ -97,7 +100,7 @@ async function operatorTab(ctx) {
 }
 
 (async () => {
-  const browser = await chromium.launch({ channel: process.env.NW_CHANNEL || 'chrome' });
+  const browser = await chromium.launch({ channel: process.env.NW_CHANNEL || 'chrome', args: process.env.NW_ARGS ? [process.env.NW_ARGS] : [] });
   const opCtx = await browser.newContext(DESK);
   const mgCtx = await browser.newContext(PHONE);
   const op = await opCtx.newPage();
@@ -113,6 +116,7 @@ async function operatorTab(ctx) {
 
   await check('operator: a wrong access code is refused with a clear message', async () => {
     await op.goto(`${BASE}/operator`);
+    console.log(`secure context: ${await op.evaluate(() => window.isSecureContext)}`);
     await op.fill('#access-code', 'wrong');
     await op.click('#signin-form button');
     await see(op, 'That access code was not accepted');
@@ -202,9 +206,12 @@ async function operatorTab(ctx) {
     await see(mg, 'Delivered, verified');
     const text = await mg.locator('#charging').innerText();
     assert.match(text, /Delivered, verified\s*0\.83 kWh/);
+    const history = await mg.locator('#history').innerText();
+    assert.match(history, /Sensors disagree/, 'the contradicted report stays listed after the revision');
+    assert.match(history, /You reported: (charging|pump) on/);
     await shot(mg, 'manager-5-observed-match');
     await see(op, 'Run outcome');
-    await see(op, 'simulator truth');
+    await see(op, 'evaluator truth');
     await shot(op, 'operator-4-outcome');
   });
 
@@ -253,37 +260,35 @@ async function operatorTab(ctx) {
     await shot(mg, 'manager-7-missing-reading');
   });
 
-  if (SENSING) {
-    await check('late reading: shown as arrived late, never as live', async () => {
-      await operatorStep(op, { follow: true, reading: 'delayed' });
-      await see(op, 'No reading');
-      await operatorStep(op, { follow: true });
-      await see(op, 'from a late reading');
-      await shot(op, 'operator-5-late-reading');
-    });
+  await check('late reading: shown as arrived late, never as live', async () => {
+    await operatorStep(op, { follow: true, reading: 'delayed' });
+    await see(op, 'No reading');
+    await operatorStep(op, { follow: true });
+    await see(op, 'from a late reading');
+    await shot(op, 'operator-5-late-reading');
+  });
 
-    await check('aggregate-only meter: cannot tell, with no per-EV credit', async () => {
-      const a = await operatorTab(opCtx);
-      const l = await operatorStart(a, BASE, 'aggregate');
-      const m = await managerOpen(mgCtx, l);
-      await m.click('button[data-act=accept]');
-      await see(m, 'Plan accepted');
-      await operatorStep(a, { follow: true });
-      await reload(m);
-      await see(m, 'Cannot tell');
-      await see(m, 'cannot tell whether it came from the pump or the charger');
-      await see(m, 'cannot be attributed to an EV');
-      const charging = await m.locator('#charging').innerText();
-      assert.match(charging, /Delivered, verified\s*Unknown/);
-      assert.match(charging, /Still to deliver\s*Unknown/);
-      assert.match(await m.locator('#tank').innerText(), /Pump seen as:\s*Unknown/);
-      assert.match(await m.locator('#readings').innerText(), /One combined meter/);
-      await absent(m, 'Sensors agree');
-      await shot(m, 'manager-8-aggregate-only');
-      await m.close();
-      await a.close();
-    });
-  }
+  await check('aggregate-only meter: cannot tell, with no per-EV credit', async () => {
+    const a = await operatorTab(opCtx);
+    const l = await operatorStart(a, BASE, 'aggregate');
+    const m = await managerOpen(mgCtx, l);
+    await m.click('button[data-act=accept]');
+    await see(m, 'Plan accepted');
+    await operatorStep(a, { follow: true });
+    await reload(m);
+    await see(m, 'Cannot tell');
+    await see(m, 'cannot tell whether it came from the pump or the charger');
+    await see(m, 'cannot be attributed to an EV');
+    const charging = await m.locator('#charging').innerText();
+    assert.match(charging, /Delivered, verified\s*Unknown/);
+    assert.match(charging, /Still to deliver\s*Unknown/);
+    assert.match(await m.locator('#tank').innerText(), /Pump seen as:\s*Unknown/);
+    assert.match(await m.locator('#readings').innerText(), /One combined meter/);
+    await absent(m, 'Sensors agree');
+    await shot(m, 'manager-8-aggregate-only');
+    await m.close();
+    await a.close();
+  });
 
   await check('pump without water: power alone is not accepted as delivery', async () => {
     const d = await operatorTab(opCtx);
@@ -304,6 +309,66 @@ async function operatorTab(ctx) {
     await m.close();
     await d.close();
   });
+
+  await check('comparison: every value shown is the value the service computed', async () => {
+    await op.click('#run-comparison');
+    await see(op, 'Comparison finished', 120000);
+    await op.selectOption('#comparison-scenario', 'infeasible_ev');
+    await see(op, 'Limits of this comparison');
+    await see(op, 'Synthetic simulation, not a measurement');
+    await see(op, 'not a significance test');
+    const id = (await op.locator('#comparison code').first().innerText()).trim();
+    const doc = await op.evaluate(async (e) => {
+      const r = await fetch(`/api/v1/experiments/${e}`, { headers: { Authorization: `Bearer ${sessionStorage.getItem('nivawatt.session.operator')}` } });
+      return r.json();
+    }, id);
+    const scenario = doc.summary.infeasible_ev;
+    const policies = Object.keys(scenario).filter((k) => !k.startsWith('paired_'));
+    assert.ok(policies.length > 0);
+    for (const policy of policies) {
+      for (const metric of ['ev_shortfall_model_kwh', 'reserve_violation_intervals', 'peak_participating_model_kw']) {
+        const cell = await op.locator(`tr[data-policy=${policy}] td[data-metric=${metric}]`).innerText();
+        const shown = Number(cell.split(' ')[0].replace(/,/g, ''));
+        assert.ok(Math.abs(shown - scenario[policy][metric].mean) <= 0.005, `${policy} ${metric}: ${cell}`);
+      }
+    }
+    await noSideScroll(op);
+    await shot(op, 'operator-7-comparison');
+  });
+
+  await check('run list: an earlier run can be reopened with its own forecast', async () => {
+    const id = new URL(link).searchParams.get('run');
+    const tab = await operatorTab(opCtx);
+    await tab.selectOption('#run-picker', id);
+    await tab.waitForFunction((r) => document.getElementById('meta').innerText.includes(r), id);
+    await see(tab, 'Approved by');
+    await tab.close();
+  });
+
+  if (process.env.NW_PYTHON) {
+    await check('device run: no switch controls, telemetry provenance, device readings summary', async () => {
+      const out = spawnSync(process.env.NW_PYTHON, ['scripts/bench_emulator.py', '--base', BASE, '--new-run', '--accept', '--follow-plan', '--intervals', '3', '--fast'], { cwd: path.join(__dirname, '..', '..'), encoding: 'utf8' });
+      assert.strictEqual(out.status, 0, out.stderr);
+      const id = out.stdout.match(/run-[0-9a-f]+/)[0];
+      const tab = await operatorTab(opCtx);
+      await tab.selectOption('#run-picker', id);
+      await tab.waitForFunction(() => document.getElementById('sim-title').textContent === 'Device run');
+      assert.strictEqual(await tab.locator('#step').isVisible(), false);
+      assert.strictEqual(await tab.locator('input[name=pump]').first().isVisible(), false);
+      assert.match(await tab.locator('#outcome-basis').innerText(), /device telemetry/);
+      await absent(tab, 'evaluator truth');
+      assert.match(await tab.locator('#run-picker').innerText(), /device/);
+      await shot(tab, 'operator-8-device-run');
+      await tab.close();
+      const m = await managerOpen(mgCtx, `${BASE}/manager?run=${id}`);
+      const readings = await m.locator('#readings').innerText();
+      assert.match(readings, /Device readings\s*\d+ readings?\. Mean pump [\d,.]+ W, mean charger [\d,.]+ W\./);
+      assert.doesNotMatch(readings, /undefined/);
+      await noSideScroll(m);
+      await shot(m, 'manager-10-device-run');
+      await m.close();
+    });
+  }
 
   await check('authorization: an invalid session returns to sign-in with a reason', async () => {
     const p = await managerOpen(mgCtx, link);
