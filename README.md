@@ -10,6 +10,8 @@ NivaWatt is an advisory system for apartment water pumps and EV chargers. The op
 
 [Project plan and architecture](docs/PROJECT_PLAN.md) · [Research, results, and sources](docs/RESEARCH.md)
 
+[Watch the NivaWatt presentation (MP4)](https://github.com/oxydevelopers/nivawatt-public/releases/download/v4.0.0/NivaWatt_presentation_revised.mp4)
+
 ## How it works
 
 ```mermaid
